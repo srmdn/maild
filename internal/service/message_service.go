@@ -22,6 +22,8 @@ type MessageStore interface {
 	AddUnsubscribe(ctx context.Context, workspaceID int64, email, reason string) error
 	UpsertSMTPAccountEncrypted(ctx context.Context, workspaceID int64, name string, encryptedPayload []byte) error
 	GetSMTPAccountEncrypted(ctx context.Context, workspaceID int64) ([]byte, bool, error)
+	SetActiveSMTPAccount(ctx context.Context, workspaceID int64, name string) error
+	ListSMTPAccounts(ctx context.Context, workspaceID int64) ([]domain.SMTPAccountSummary, error)
 	CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error)
 	GetMessage(ctx context.Context, id int64) (domain.Message, error)
 	SetMessageStatus(ctx context.Context, id int64, status string) error
@@ -30,6 +32,14 @@ type MessageStore interface {
 	InsertAttempt(ctx context.Context, messageID int64, attemptNo int, provider, response string, success bool) error
 	ListMessageAttempts(ctx context.Context, messageID int64) ([]domain.MessageAttempt, error)
 	ListMessages(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error)
+	CountMessagesSince(ctx context.Context, workspaceID int64, recipientDomain string, since time.Time) (int64, error)
+	UpsertWorkspacePolicy(ctx context.Context, p domain.WorkspacePolicy) error
+	GetWorkspacePolicy(ctx context.Context, workspaceID int64) (domain.WorkspacePolicy, bool, error)
+	InsertMeteringEvent(ctx context.Context, e domain.MeteringEvent) error
+	MeteringSummary(ctx context.Context, workspaceID int64, from, to time.Time) ([]domain.MeteringSummaryItem, error)
+	ExportMessageLogsCSV(ctx context.Context, workspaceID int64, limit int) (string, error)
+	InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (domain.WebhookEvent, error)
+	ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error)
 }
 
 type MessageQueue interface {
@@ -49,11 +59,17 @@ type MessageService struct {
 	limiter                 RateLimiter
 	blockedRecipientDomains map[string]struct{}
 	maxAttempts             int
+	webhookApplyMaxAttempts int
+	defaultWorkspaceRate    int
+	defaultDomainRate       int
 }
 
-func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, limiter RateLimiter, blockedRecipientDomains map[string]struct{}, maxAttempts int) *MessageService {
+func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, limiter RateLimiter, blockedRecipientDomains map[string]struct{}, maxAttempts int, webhookApplyMaxAttempts int, defaultWorkspaceRate int, defaultDomainRate int) *MessageService {
 	if maxAttempts < 1 {
 		maxAttempts = 1
+	}
+	if webhookApplyMaxAttempts < 1 {
+		webhookApplyMaxAttempts = 1
 	}
 	return &MessageService{
 		store:                   store,
@@ -63,6 +79,9 @@ func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclien
 		limiter:                 limiter,
 		blockedRecipientDomains: blockedRecipientDomains,
 		maxAttempts:             maxAttempts,
+		webhookApplyMaxAttempts: webhookApplyMaxAttempts,
+		defaultWorkspaceRate:    defaultWorkspaceRate,
+		defaultDomainRate:       defaultDomainRate,
 	}
 }
 
@@ -75,6 +94,34 @@ func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fr
 	if recipientDomain == "" {
 		return domain.Message{}, ErrBadRequest
 	}
+	policy, err := s.workspacePolicy(ctx, workspaceID)
+	if err != nil {
+		return domain.Message{}, err
+	}
+
+	if policy.RateLimitWorkspacePerHour > 0 {
+		count, err := s.store.CountMessagesSince(ctx, workspaceID, "", time.Now().UTC().Add(-1*time.Hour))
+		if err != nil {
+			return domain.Message{}, err
+		}
+		if count >= int64(policy.RateLimitWorkspacePerHour) {
+			return domain.Message{}, fmt.Errorf("%w: tenant_workspace_policy_limit", ErrRateLimited)
+		}
+	}
+	if policy.RateLimitDomainPerHour > 0 {
+		count, err := s.store.CountMessagesSince(ctx, workspaceID, recipientDomain, time.Now().UTC().Add(-1*time.Hour))
+		if err != nil {
+			return domain.Message{}, err
+		}
+		if count >= int64(policy.RateLimitDomainPerHour) {
+			return domain.Message{}, fmt.Errorf("%w: tenant_domain_policy_limit", ErrRateLimited)
+		}
+	}
+
+	if isBlockedDomain(policy.BlockedRecipientDomains, recipientDomain) {
+		return domain.Message{}, ErrBlockedRecipientDomain
+	}
+
 	if _, blocked := s.blockedRecipientDomains[recipientDomain]; blocked {
 		return domain.Message{}, ErrBlockedRecipientDomain
 	}
@@ -114,12 +161,26 @@ func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fr
 	}
 
 	if suppressed {
+		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+			WorkspaceID: workspaceID,
+			MessageID:   m.ID,
+			EventType:   "message_suppressed",
+			Quantity:    1,
+			Metadata:    `{"source":"queue_message"}`,
+		})
 		return m, nil
 	}
 
 	if err := s.queue.Enqueue(ctx, m.ID); err != nil {
 		return domain.Message{}, err
 	}
+	_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+		WorkspaceID: workspaceID,
+		MessageID:   m.ID,
+		EventType:   "message_queued",
+		Quantity:    1,
+		Metadata:    `{"source":"queue_message"}`,
+	})
 
 	return m, nil
 }
@@ -173,6 +234,13 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, smtpclient.ProviderName(creds), "accepted by smtp server", true); err != nil {
 			return err
 		}
+		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+			WorkspaceID: m.WorkspaceID,
+			MessageID:   m.ID,
+			EventType:   "message_sent",
+			Quantity:    1,
+			Metadata:    `{"provider":"` + smtpclient.ProviderName(creds) + `"}`,
+		})
 		return s.store.SetMessageStatus(ctx, m.ID, "sent")
 	}
 
@@ -182,6 +250,13 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 	}
 
 	if attemptNo >= s.maxAttempts {
+		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+			WorkspaceID: m.WorkspaceID,
+			MessageID:   m.ID,
+			EventType:   "message_failed",
+			Quantity:    1,
+			Metadata:    `{"provider":"` + smtpclient.ProviderName(creds) + `"}`,
+		})
 		return s.store.SetMessageStatus(ctx, m.ID, "failed")
 	}
 
@@ -215,6 +290,40 @@ func (s *MessageService) UpsertSMTPAccount(ctx context.Context, account domain.S
 		return err
 	}
 	return s.store.UpsertSMTPAccountEncrypted(ctx, account.WorkspaceID, account.Name, encrypted)
+}
+
+func (s *MessageService) SetActiveSMTPAccount(ctx context.Context, workspaceID int64, name string) error {
+	return s.store.SetActiveSMTPAccount(ctx, workspaceID, name)
+}
+
+func (s *MessageService) SMTPAccounts(ctx context.Context, workspaceID int64) ([]domain.SMTPAccountSummary, error) {
+	return s.store.ListSMTPAccounts(ctx, workspaceID)
+}
+
+func (s *MessageService) UpsertWorkspacePolicy(ctx context.Context, policy domain.WorkspacePolicy) error {
+	if policy.WorkspaceID == 0 {
+		policy.WorkspaceID = 1
+	}
+	if policy.RateLimitWorkspacePerHour < 1 {
+		policy.RateLimitWorkspacePerHour = s.defaultWorkspaceRate
+	}
+	if policy.RateLimitDomainPerHour < 1 {
+		policy.RateLimitDomainPerHour = s.defaultDomainRate
+	}
+	policy.BlockedRecipientDomains = normalizeDomains(policy.BlockedRecipientDomains)
+	return s.store.UpsertWorkspacePolicy(ctx, policy)
+}
+
+func (s *MessageService) WorkspacePolicy(ctx context.Context, workspaceID int64) (domain.WorkspacePolicy, error) {
+	return s.workspacePolicy(ctx, workspaceID)
+}
+
+func (s *MessageService) MeteringSummary(ctx context.Context, workspaceID int64, from, to time.Time) ([]domain.MeteringSummaryItem, error) {
+	return s.store.MeteringSummary(ctx, workspaceID, from, to)
+}
+
+func (s *MessageService) ExportMessageLogsCSV(ctx context.Context, workspaceID int64, limit int) (string, error) {
+	return s.store.ExportMessageLogsCSV(ctx, workspaceID, limit)
 }
 
 func (s *MessageService) resolveCredentials(ctx context.Context, workspaceID int64) (smtpclient.Credentials, error) {
@@ -272,6 +381,91 @@ func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, lim
 	return s.store.ListMessages(ctx, workspaceID, limit)
 }
 
+func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string) (domain.WebhookEvent, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	email = strings.TrimSpace(email)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		switch eventType {
+		case "bounce", "complaint":
+			reason = "provider_" + eventType
+		case "unsubscribe":
+			reason = "provider_unsubscribe"
+		}
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= s.webhookApplyMaxAttempts; attempt++ {
+		var err error
+		switch eventType {
+		case "bounce", "complaint":
+			err = s.store.AddSuppression(ctx, workspaceID, email, reason)
+		case "unsubscribe":
+			err = s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
+		default:
+			err = fmt.Errorf("unsupported webhook event type: %s", eventType)
+		}
+
+		if err == nil {
+			return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+				WorkspaceID:  workspaceID,
+				EventType:    eventType,
+				Email:        email,
+				Reason:       reason,
+				Status:       "applied",
+				AttemptCount: attempt,
+				RawPayload:   rawPayload,
+			})
+		}
+
+		lastErr = err
+		if attempt < s.webhookApplyMaxAttempts {
+			time.Sleep(webhookBackoffDuration(attempt))
+		}
+	}
+
+	return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+		WorkspaceID:  workspaceID,
+		EventType:    eventType,
+		Email:        email,
+		Reason:       reason,
+		Status:       "dead_letter",
+		AttemptCount: s.webhookApplyMaxAttempts,
+		LastError:    lastErr.Error(),
+		RawPayload:   rawPayload,
+	})
+}
+
+func (s *MessageService) RecordWebhookDeadLetter(ctx context.Context, workspaceID int64, eventType, email, reason, lastError, rawPayload string, attemptCount int) (domain.WebhookEvent, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	if attemptCount < 1 {
+		attemptCount = 1
+	}
+	eventType = strings.TrimSpace(strings.ToLower(eventType))
+	if eventType == "" {
+		eventType = "unknown"
+	}
+	return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+		WorkspaceID:  workspaceID,
+		EventType:    eventType,
+		Email:        strings.TrimSpace(strings.ToLower(email)),
+		Reason:       strings.TrimSpace(reason),
+		Status:       "dead_letter",
+		AttemptCount: attemptCount,
+		LastError:    strings.TrimSpace(lastError),
+		RawPayload:   rawPayload,
+	})
+}
+
+func (s *MessageService) WebhookLogs(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error) {
+	return s.store.ListWebhookEvents(ctx, workspaceID, limit, strings.TrimSpace(strings.ToLower(status)))
+}
+
 var ErrBadRequest = errors.New("bad request")
 var ErrRateLimited = errors.New("rate limited")
 var ErrBlockedRecipientDomain = errors.New("blocked recipient domain")
@@ -291,6 +485,17 @@ func backoffDuration(attemptNo int) time.Duration {
 	seconds := 1 << (attemptNo - 1)
 	if seconds > 32 {
 		seconds = 32
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func webhookBackoffDuration(attemptNo int) time.Duration {
+	if attemptNo < 1 {
+		attemptNo = 1
+	}
+	seconds := 1 << (attemptNo - 1)
+	if seconds > 8 {
+		seconds = 8
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -326,4 +531,55 @@ func FormatQueueError(err error) string {
 		return "bad_request"
 	}
 	return "internal_error"
+}
+
+func (s *MessageService) workspacePolicy(ctx context.Context, workspaceID int64) (domain.WorkspacePolicy, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	policy, found, err := s.store.GetWorkspacePolicy(ctx, workspaceID)
+	if err != nil {
+		return domain.WorkspacePolicy{}, err
+	}
+	if found {
+		policy.BlockedRecipientDomains = normalizeDomains(policy.BlockedRecipientDomains)
+		return policy, nil
+	}
+	defaults := make([]string, 0, len(s.blockedRecipientDomains))
+	for d := range s.blockedRecipientDomains {
+		defaults = append(defaults, d)
+	}
+	return domain.WorkspacePolicy{
+		WorkspaceID:               workspaceID,
+		RateLimitWorkspacePerHour: s.defaultWorkspaceRate,
+		RateLimitDomainPerHour:    s.defaultDomainRate,
+		BlockedRecipientDomains:   normalizeDomains(defaults),
+	}, nil
+}
+
+func isBlockedDomain(list []string, domain string) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	for _, d := range list {
+		if strings.ToLower(strings.TrimSpace(d)) == domain {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeDomains(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, d := range in {
+		v := strings.ToLower(strings.TrimSpace(d))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }

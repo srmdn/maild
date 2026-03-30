@@ -64,6 +64,9 @@ func Run() error {
 		limiter,
 		cfg.BlockedRecipientDomains,
 		cfg.MaxAttempts,
+		cfg.WebhookApplyMaxAttempts,
+		cfg.RateLimitWorkspacePerHour,
+		cfg.RateLimitDomainPerHour,
 	)
 	if err := messageService.Bootstrap(ctx); err != nil {
 		return err

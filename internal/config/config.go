@@ -27,6 +27,7 @@ type Config struct {
 	WebhookSignatureHeader    string
 	WebhookTimestampHeader    string
 	WebhookMaxSkew            time.Duration
+	WebhookApplyMaxAttempts   int
 
 	PostgresDSN string
 	RedisAddr   string
@@ -60,6 +61,7 @@ func Load() Config {
 		WebhookSignatureHeader:    getEnv("WEBHOOK_SIGNATURE_HEADER", "X-Webhook-Signature"),
 		WebhookTimestampHeader:    getEnv("WEBHOOK_TIMESTAMP_HEADER", "X-Webhook-Timestamp"),
 		WebhookMaxSkew:            getDurationEnv("WEBHOOK_MAX_SKEW", 5*time.Minute),
+		WebhookApplyMaxAttempts:   getIntEnv("WEBHOOK_APPLY_MAX_ATTEMPTS", 3),
 		PostgresDSN:               getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:                   getIntEnv("REDIS_DB", 0),
@@ -105,6 +107,9 @@ func (c Config) Validate() error {
 		}
 		if c.WebhookMaxSkew <= 0 {
 			return ErrInvalidConfig("WEBHOOK_MAX_SKEW must be > 0 when WEBHOOKS_ENABLED=true")
+		}
+		if c.WebhookApplyMaxAttempts < 1 {
+			return ErrInvalidConfig("WEBHOOK_APPLY_MAX_ATTEMPTS must be >= 1 when WEBHOOKS_ENABLED=true")
 		}
 	}
 	return nil

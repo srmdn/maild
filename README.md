@@ -57,6 +57,14 @@ http://localhost:8025
 - `GET /readyz`
 - `POST /v1/messages`
 - `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
+- `GET /v1/webhooks/logs`
+- `GET /v1/smtp-accounts/list`
+- `POST /v1/smtp-accounts/activate`
+- `GET/POST /v1/workspaces/policy`
+- `GET /ui/policy`
+- `GET /v1/analytics/summary`
+- `GET /v1/analytics/export.csv`
+- `GET /v1/billing/metering`
 
 Example:
 
@@ -138,6 +146,18 @@ curl -sS -X POST http://localhost:8080/v1/smtp-accounts/validate \
   -d '{"workspace_id":1}'
 ```
 
+SMTP account list and manual active-provider switch:
+
+```sh
+curl -sS "http://localhost:8080/v1/smtp-accounts/list?workspace_id=1" \
+  -H "X-API-Key: change-me-operator"
+
+curl -sS -X POST http://localhost:8080/v1/smtp-accounts/activate \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":1,"name":"mxroute-main"}'
+```
+
 Operator message logs view:
 
 ```sh
@@ -164,6 +184,60 @@ curl -sS -X POST http://localhost:8080/v1/webhooks/events \
   -H "X-Webhook-Timestamp: $ts" \
   -H "X-Webhook-Signature: v1=$sig" \
   -d "$body"
+```
+
+Webhook payload compatibility:
+- single event object (`workspace_id`, `type`/`event`, `email`/`recipient`, optional `reason`)
+- event arrays (for provider batch delivery)
+- common provider aliases map to internal types: `bounce`, `complaint`, `unsubscribe`
+
+For mixed batches, the API returns `processed_count` and `rejected_count`.
+
+Webhook reliability behavior:
+- each webhook apply action uses bounded retries (`WEBHOOK_APPLY_MAX_ATTEMPTS`)
+- malformed/unsupported streams are persisted as dead-letter webhook events for audit
+
+Operator webhook logs view:
+
+```sh
+curl -sS "http://localhost:8080/v1/webhooks/logs?workspace_id=1&limit=20&status=dead_letter" \
+  -H "X-API-Key: change-me-operator"
+```
+
+Tenant policy controls:
+
+```sh
+curl -sS "http://localhost:8080/v1/workspaces/policy?workspace_id=1" \
+  -H "X-API-Key: change-me-operator"
+
+curl -sS -X POST http://localhost:8080/v1/workspaces/policy \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "rate_limit_workspace_per_hour": 600,
+    "rate_limit_domain_per_hour": 250,
+    "blocked_recipient_domains": ["mailinator.com", "tempmail.com"]
+  }'
+```
+
+Policy UI:
+
+```text
+http://localhost:8080/ui/policy?workspace_id=1
+```
+
+Analytics/export and billing metering:
+
+```sh
+curl -sS "http://localhost:8080/v1/analytics/summary?workspace_id=1" \
+  -H "X-API-Key: change-me-operator"
+
+curl -sS "http://localhost:8080/v1/analytics/export.csv?workspace_id=1&limit=1000" \
+  -H "X-API-Key: change-me-operator"
+
+curl -sS "http://localhost:8080/v1/billing/metering?workspace_id=1" \
+  -H "X-API-Key: change-me-operator"
 ```
 
 `/v1/*` endpoints require API key authentication using:

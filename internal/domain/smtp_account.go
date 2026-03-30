@@ -9,3 +9,10 @@ type SMTPAccount struct {
 	Password    string `json:"password"`
 	FromEmail   string `json:"from_email"`
 }
+
+type SMTPAccountSummary struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Name        string `json:"name"`
+	Active      bool   `json:"active"`
+	UpdatedAt   string `json:"updated_at"`
+}

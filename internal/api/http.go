@@ -76,6 +76,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
 	)
 	mux.HandleFunc(
+		"/v1/smtp-accounts/activate",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.activateSMTPAccount)),
+	)
+	mux.HandleFunc(
+		"/v1/smtp-accounts/list",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.listSMTPAccounts)),
+	)
+	mux.HandleFunc(
 		"/v1/domains/readiness",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.checkDomainReadiness)),
 	)
@@ -90,6 +98,30 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(
 		"/v1/messages/logs",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
+	)
+	mux.HandleFunc(
+		"/v1/webhooks/logs",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.webhookLogs)),
+	)
+	mux.HandleFunc(
+		"/v1/workspaces/policy",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicy)),
+	)
+	mux.HandleFunc(
+		"/v1/analytics/summary",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.analyticsSummary)),
+	)
+	mux.HandleFunc(
+		"/v1/analytics/export.csv",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.analyticsExportCSV)),
+	)
+	mux.HandleFunc(
+		"/v1/billing/metering",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.billingMetering)),
+	)
+	mux.HandleFunc(
+		"/ui/policy",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicyUI)),
 	)
 	if h.webhooksEnabled {
 		mux.HandleFunc("/v1/webhooks/events", h.receiveWebhookEvent)
@@ -126,56 +158,122 @@ func (h *Handler) receiveWebhookEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req webhookEventRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
-		return
-	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
-	}
-
-	eventType := strings.ToLower(strings.TrimSpace(req.Type))
-	email := strings.TrimSpace(req.Email)
-	if email == "" {
-		http.Error(w, "email is required", http.StatusBadRequest)
-		return
-	}
-
-	reason := strings.TrimSpace(req.Reason)
-	switch eventType {
-	case "bounce", "complaint":
-		if reason == "" {
-			reason = "provider_" + eventType
+	events, rejected, err := parseWebhookEvents(body)
+	if err != nil {
+		if _, dlqErr := h.messages.RecordWebhookDeadLetter(
+			r.Context(),
+			1,
+			"unknown",
+			"",
+			"invalid_payload",
+			err.Error(),
+			string(body),
+			1,
+		); dlqErr != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(dlqErr))
+			return
 		}
-		if err := h.messages.AddSuppression(r.Context(), req.WorkspaceID, email, reason); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":              "accepted",
+			"processed_count":     0,
+			"rejected_count":      1,
+			"dead_lettered_count": 1,
+			"total_count":         1,
+		})
+		h.logger.Warn("webhook_payload_dead_lettered", "reason", err.Error())
+		return
+	}
+
+	processed := 0
+	deadLettered := 0
+	var firstAccepted webhookEventRequest
+	rawPayload := string(body)
+
+	for _, req := range events {
+		if req.WorkspaceID == 0 {
+			req.WorkspaceID = 1
+		}
+
+		eventType := strings.ToLower(strings.TrimSpace(req.Type))
+		email := strings.TrimSpace(req.Email)
+		if email == "" {
+			rejected++
+			continue
+		}
+
+		reason := strings.TrimSpace(req.Reason)
+		event, err := h.messages.ProcessWebhookEvent(r.Context(), req.WorkspaceID, eventType, email, reason, rawPayload)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
 			return
 		}
-	case "unsubscribe":
-		if reason == "" {
-			reason = "provider_unsubscribe"
+		if event.Status == "dead_letter" {
+			deadLettered++
 		}
-		if err := h.messages.AddUnsubscribe(r.Context(), req.WorkspaceID, email, reason); err != nil {
+
+		processed++
+		if processed == 1 {
+			firstAccepted = webhookEventRequest{
+				WorkspaceID: req.WorkspaceID,
+				Type:        eventType,
+				Email:       email,
+				Reason:      reason,
+			}
+		}
+		h.logger.Info("webhook_event_processed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email, "status", event.Status, "attempt_count", event.AttemptCount)
+	}
+
+	if rejected > 0 {
+		rejectedWorkspaceID := int64(1)
+		if len(events) > 0 && events[0].WorkspaceID > 0 {
+			rejectedWorkspaceID = events[0].WorkspaceID
+		}
+		if _, err := h.messages.RecordWebhookDeadLetter(
+			r.Context(),
+			rejectedWorkspaceID,
+			"unknown",
+			"",
+			"rejected_records",
+			"webhook payload contained unsupported or incomplete records",
+			rawPayload,
+			1,
+		); err != nil {
 			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
-			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
 			return
 		}
-	default:
-		http.Error(w, "unsupported webhook type", http.StatusBadRequest)
+		deadLettered++
+	}
+
+	if processed == 0 {
+		http.Error(w, "invalid webhook payload", http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	if processed == 1 && rejected == 0 {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":       "accepted",
+			"workspace_id": firstAccepted.WorkspaceID,
+			"type":         firstAccepted.Type,
+			"email":        firstAccepted.Email,
+		})
+		return
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":       "accepted",
-		"workspace_id": req.WorkspaceID,
-		"type":         eventType,
-		"email":        email,
+		"status":              "accepted",
+		"processed_count":     processed,
+		"rejected_count":      rejected,
+		"dead_lettered_count": deadLettered,
+		"total_count":         processed + rejected,
 	})
-	h.logger.Info("webhook_event_accepted", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
+	if rejected > 0 {
+		h.logger.Warn("webhook_event_partially_rejected", "processed", processed, "rejected", rejected)
+	}
 }
 
 type createMessageRequest struct {
@@ -379,6 +477,74 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("smtp_account_upserted", "workspace_id", req.WorkspaceID, "name", req.Name, "host", req.Host, "port", req.Port)
 }
 
+type activateSMTPAccountRequest struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Name        string `json:"name"`
+}
+
+func (h *Handler) activateSMTPAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req activateSMTPAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.messages.SetActiveSMTPAccount(r.Context(), req.WorkspaceID, req.Name); err != nil {
+		writeError(w, http.StatusBadRequest, sanitize.HTTPInternalError(err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": req.WorkspaceID,
+		"name":         req.Name,
+		"status":       "active",
+	})
+}
+
+func (h *Handler) listSMTPAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	accounts, err := h.messages.SMTPAccounts(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": workspaceID,
+		"count":        len(accounts),
+		"accounts":     accounts,
+	})
+}
+
+type upsertWorkspacePolicyRequest struct {
+	WorkspaceID               int64    `json:"workspace_id"`
+	RateLimitWorkspacePerHour int      `json:"rate_limit_workspace_per_hour"`
+	RateLimitDomainPerHour    int      `json:"rate_limit_domain_per_hour"`
+	BlockedRecipientDomains   []string `json:"blocked_recipient_domains"`
+}
+
 type checkDomainReadinessRequest struct {
 	WorkspaceID  int64  `json:"workspace_id"`
 	Domain       string `json:"domain"`
@@ -522,6 +688,243 @@ func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) webhookLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	limitRaw := r.URL.Query().Get("limit")
+	limit := 50
+	if strings.TrimSpace(limitRaw) != "" {
+		parsed, err := strconv.Atoi(limitRaw)
+		if err != nil {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
+
+	events, err := h.messages.WebhookLogs(r.Context(), workspaceID, limit, status)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": workspaceID,
+		"status":       status,
+		"count":        len(events),
+		"events":       events,
+	})
+}
+
+func (h *Handler) workspacePolicy(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+		if err != nil {
+			http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+			return
+		}
+		policy, err := h.messages.WorkspacePolicy(r.Context(), workspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(policy)
+	case http.MethodPost:
+		role, _ := auth.RoleFromContext(r.Context())
+		if role != auth.RoleAdmin {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		var req upsertWorkspacePolicyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		if req.WorkspaceID == 0 {
+			req.WorkspaceID = 1
+		}
+		err := h.messages.UpsertWorkspacePolicy(r.Context(), domain.WorkspacePolicy{
+			WorkspaceID:               req.WorkspaceID,
+			RateLimitWorkspacePerHour: req.RateLimitWorkspacePerHour,
+			RateLimitDomainPerHour:    req.RateLimitDomainPerHour,
+			BlockedRecipientDomains:   req.BlockedRecipientDomains,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+			return
+		}
+		policy, err := h.messages.WorkspacePolicy(r.Context(), req.WorkspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(policy)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) workspacePolicyUI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	policy, err := h.messages.WorkspacePolicy(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	joined := strings.Join(policy.BlockedRecipientDomains, ", ")
+	html := `<!doctype html>
+<html><head><meta charset="utf-8"><title>maild policy</title>
+<style>body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:760px}code{background:#f2f2f2;padding:.1rem .3rem}input,textarea{width:100%;padding:.5rem;margin:.25rem 0 1rem}button{padding:.6rem 1rem}pre{background:#f8f8f8;padding:1rem;overflow:auto}</style>
+</head><body>
+<h1>Workspace Policy</h1>
+<p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
+<label>API Key (admin)</label>
+<input id="apiKey" type="text" placeholder="change-me-admin" />
+<form id="policyForm">
+<label>Workspace Hourly Limit</label>
+<input id="rateWorkspace" type="number" name="rate_limit_workspace_per_hour" value="` + strconv.Itoa(policy.RateLimitWorkspacePerHour) + `" />
+<label>Domain Hourly Limit</label>
+<input id="rateDomain" type="number" name="rate_limit_domain_per_hour" value="` + strconv.Itoa(policy.RateLimitDomainPerHour) + `" />
+<label>Blocked Recipient Domains (comma-separated)</label>
+<textarea id="blockedDomains" rows="4">` + joined + `</textarea>
+<button type="submit">Save Policy</button>
+</form>
+<p id="status"></p>
+<pre id="result"></pre>
+<script>
+const form = document.getElementById('policyForm');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const body = {
+    workspace_id: ` + strconv.FormatInt(workspaceID, 10) + `,
+    rate_limit_workspace_per_hour: Number(document.getElementById('rateWorkspace').value),
+    rate_limit_domain_per_hour: Number(document.getElementById('rateDomain').value),
+    blocked_recipient_domains: document.getElementById('blockedDomains').value.split(',').map(v => v.trim()).filter(Boolean)
+  };
+  const res = await fetch('/v1/workspaces/policy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  document.getElementById('status').textContent = 'HTTP ' + res.status;
+  document.getElementById('result').textContent = text;
+});
+</script>
+</body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(html))
+}
+
+func (h *Handler) analyticsSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r)
+	items, err := h.messages.MeteringSummary(r.Context(), workspaceID, from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": workspaceID,
+		"from":         from.UTC().Format(time.RFC3339),
+		"to":           to.UTC().Format(time.RFC3339),
+		"items":        items,
+	})
+}
+
+func (h *Handler) billingMetering(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r)
+	items, err := h.messages.MeteringSummary(r.Context(), workspaceID, from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": workspaceID,
+		"from":         from.UTC().Format(time.RFC3339),
+		"to":           to.UTC().Format(time.RFC3339),
+		"metering":     items,
+	})
+}
+
+func (h *Handler) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	limit := 500
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	csvData, err := h.messages.ExportMessageLogsCSV(r.Context(), workspaceID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="maild_messages.csv"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(csvData))
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -546,4 +949,25 @@ func parseInt64Query(r *http.Request, key string, fallback int64) (int64, error)
 		return fallback, nil
 	}
 	return strconv.ParseInt(raw, 10, 64)
+}
+
+func parseFromTo(r *http.Request) (time.Time, time.Time) {
+	now := time.Now().UTC()
+	defaultFrom := now.Add(-24 * time.Hour)
+	from := defaultFrom
+	to := now
+	if raw := strings.TrimSpace(r.URL.Query().Get("from")); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			from = t.UTC()
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("to")); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			to = t.UTC()
+		}
+	}
+	if !to.After(from) {
+		to = from.Add(24 * time.Hour)
+	}
+	return from, to
 }
