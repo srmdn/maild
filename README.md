@@ -67,6 +67,7 @@ Example:
 
 ```sh
 curl -sS -X POST http://localhost:8080/v1/messages \
+  -H "X-API-Key: change-me" \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
@@ -76,6 +77,8 @@ curl -sS -X POST http://localhost:8080/v1/messages \
     "body_text": "maild first delivery test"
   }'
 ```
+
+`/v1/*` endpoints require API key authentication using `API_KEY_HEADER` and `API_KEY`.
 
 ## Architecture
 

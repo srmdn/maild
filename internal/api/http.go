@@ -5,20 +5,27 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/srmdn/maild/internal/auth"
 	"github.com/srmdn/maild/internal/domain"
 	"github.com/srmdn/maild/internal/service"
 )
 
 type Handler struct {
-	messages *service.MessageService
+	messages     *service.MessageService
+	apiKeyHeader string
+	apiKey       string
 }
 
-func NewHandler(messages *service.MessageService) *Handler {
-	return &Handler{messages: messages}
+func NewHandler(messages *service.MessageService, apiKeyHeader, apiKey string) *Handler {
+	return &Handler{
+		messages:     messages,
+		apiKeyHeader: apiKeyHeader,
+		apiKey:       apiKey,
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/v1/messages", h.createMessage)
+	mux.HandleFunc("/v1/messages", auth.APIKeyMiddleware(h.apiKeyHeader, h.apiKey, h.createMessage))
 }
 
 type createMessageRequest struct {

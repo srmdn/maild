@@ -23,6 +23,9 @@ import (
 
 func Run() error {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	ctx := context.Background()
 	appCtx, appCancel := context.WithCancel(context.Background())
@@ -49,7 +52,7 @@ func Run() error {
 		return err
 	}
 
-	apiHandler := api.NewHandler(messageService)
+	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.APIKey)
 	server := httpserver.New(cfg, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 

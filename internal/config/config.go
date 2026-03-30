@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,8 @@ type Config struct {
 	WriteTimeout      time.Duration
 	ShutdownTimeout   time.Duration
 	MaxAttempts       int
+	APIKeyHeader      string
+	APIKey            string
 
 	PostgresDSN string
 	RedisAddr   string
@@ -35,6 +38,8 @@ func Load() Config {
 		WriteTimeout:      getDurationEnv("APP_WRITE_TIMEOUT", 15*time.Second),
 		ShutdownTimeout:   getDurationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
 		MaxAttempts:       getIntEnv("APP_MAX_ATTEMPTS", 3),
+		APIKeyHeader:      getEnv("API_KEY_HEADER", "X-API-Key"),
+		APIKey:            getEnv("API_KEY", "change-me"),
 		PostgresDSN:       getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:           getIntEnv("REDIS_DB", 0),
@@ -44,6 +49,22 @@ func Load() Config {
 		SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:          getEnv("SMTP_FROM", "noreply@maild.local"),
 	}
+}
+
+func (c Config) Validate() error {
+	if strings.TrimSpace(c.APIKeyHeader) == "" {
+		return ErrInvalidConfig("API_KEY_HEADER must not be empty")
+	}
+	if strings.TrimSpace(c.APIKey) == "" {
+		return ErrInvalidConfig("API_KEY must not be empty")
+	}
+	return nil
+}
+
+type ErrInvalidConfig string
+
+func (e ErrInvalidConfig) Error() string {
+	return string(e)
 }
 
 func getEnv(key, fallback string) string {
