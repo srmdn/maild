@@ -134,6 +134,29 @@ curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
   }'
 ```
 
+Admin-only SMTP provider validation:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/smtp-accounts/validate \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":1}'
+```
+
+Operator message logs view:
+
+```sh
+curl -sS "http://localhost:8080/v1/messages/logs?workspace_id=1&limit=20" \
+  -H "X-API-Key: change-me-operator"
+```
+
+Operator message timeline view:
+
+```sh
+curl -sS "http://localhost:8080/v1/messages/timeline?message_id=1" \
+  -H "X-API-Key: change-me-operator"
+```
+
 `/v1/*` endpoints require API key authentication using:
 - `API_KEY_HEADER`
 - `ADMIN_API_KEY`

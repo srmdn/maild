@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/srmdn/maild/internal/auth"
@@ -58,6 +59,18 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(
 		"/v1/domains/readiness",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.checkDomainReadiness)),
+	)
+	mux.HandleFunc(
+		"/v1/smtp-accounts/validate",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.validateSMTPAccount)),
+	)
+	mux.HandleFunc(
+		"/v1/messages/timeline",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageTimeline)),
+	)
+	mux.HandleFunc(
+		"/v1/messages/logs",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
 	)
 }
 
@@ -306,6 +319,105 @@ func (h *Handler) checkDomainReadiness(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+type validateSMTPAccountRequest struct {
+	WorkspaceID int64 `json:"workspace_id"`
+}
+
+func (h *Handler) validateSMTPAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req validateSMTPAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+
+	provider, err := h.messages.ValidateSMTPAccount(r.Context(), req.WorkspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, sanitize.SMTPError(err.Error()))
+		h.logger.Warn("smtp_account_validate_failed", "workspace_id", req.WorkspaceID)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": req.WorkspaceID,
+		"provider":     provider,
+		"valid":        true,
+	})
+	h.logger.Info("smtp_account_validated", "workspace_id", req.WorkspaceID, "provider", provider)
+}
+
+func (h *Handler) messageTimeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	messageID, err := parseInt64Query(r, "message_id", 0)
+	if err != nil || messageID == 0 {
+		http.Error(w, "message_id is required", http.StatusBadRequest)
+		return
+	}
+
+	message, attempts, err := h.messages.MessageTimeline(r.Context(), messageID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"message":  message,
+		"attempts": attempts,
+	})
+}
+
+func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	limitRaw := r.URL.Query().Get("limit")
+	limit := 50
+	if strings.TrimSpace(limitRaw) != "" {
+		parsed, err := strconv.Atoi(limitRaw)
+		if err != nil {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+
+	messages, err := h.messages.MessageLogs(r.Context(), workspaceID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": workspaceID,
+		"count":        len(messages),
+		"messages":     messages,
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -322,4 +434,12 @@ func writeDomainReadinessJSON(w http.ResponseWriter, status int, payload domainc
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func parseInt64Query(r *http.Request, key string, fallback int64) (int64, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	return strconv.ParseInt(raw, 10, 64)
 }

@@ -28,6 +28,8 @@ type MessageStore interface {
 	TransitionMessageStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error)
 	NextAttemptNo(ctx context.Context, messageID int64) (int, error)
 	InsertAttempt(ctx context.Context, messageID int64, attemptNo int, provider, response string, success bool) error
+	ListMessageAttempts(ctx context.Context, messageID int64) ([]domain.MessageAttempt, error)
+	ListMessages(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error)
 }
 
 type MessageQueue interface {
@@ -241,6 +243,33 @@ func (s *MessageService) resolveCredentials(ctx context.Context, workspaceID int
 		Password: account.Password,
 		From:     account.FromEmail,
 	}, nil
+}
+
+func (s *MessageService) ValidateSMTPAccount(ctx context.Context, workspaceID int64) (string, error) {
+	creds, err := s.resolveCredentials(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	if err := s.sender.Validate(creds, 5*time.Second); err != nil {
+		return "", err
+	}
+	return smtpclient.ProviderName(creds), nil
+}
+
+func (s *MessageService) MessageTimeline(ctx context.Context, messageID int64) (domain.Message, []domain.MessageAttempt, error) {
+	m, err := s.store.GetMessage(ctx, messageID)
+	if err != nil {
+		return domain.Message{}, nil, err
+	}
+	attempts, err := s.store.ListMessageAttempts(ctx, messageID)
+	if err != nil {
+		return domain.Message{}, nil, err
+	}
+	return m, attempts, nil
+}
+
+func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error) {
+	return s.store.ListMessages(ctx, workspaceID, limit)
 }
 
 var ErrBadRequest = errors.New("bad request")

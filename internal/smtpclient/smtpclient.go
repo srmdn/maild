@@ -2,8 +2,10 @@ package smtpclient
 
 import (
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"github.com/srmdn/maild/internal/config"
 )
@@ -50,6 +52,29 @@ func (c *Client) Send(creds Credentials, toEmail, subject, body string) error {
 	}
 
 	return smtp.SendMail(addr, auth, creds.From, []string{toEmail}, []byte(msg))
+}
+
+func (c *Client) Validate(creds Credentials, timeout time.Duration) error {
+	addr := fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, creds.Host)
+	if err != nil {
+		return err
+	}
+	defer client.Quit()
+
+	if creds.Username != "" || creds.Password != "" {
+		if err := client.Auth(smtp.PlainAuth("", creds.Username, creds.Password, creds.Host)); err != nil {
+			return err
+		}
+	}
+	return client.Noop()
 }
 
 func buildMessage(from, to, subject, body string) string {

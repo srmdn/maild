@@ -211,3 +211,63 @@ func (s *Store) InsertAttempt(ctx context.Context, messageID int64, attemptNo in
 	)
 	return err
 }
+
+func (s *Store) ListMessageAttempts(ctx context.Context, messageID int64) ([]domain.MessageAttempt, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, message_id, attempt_no, smtp_provider, smtp_response, success, created_at
+		 FROM message_attempts
+		 WHERE message_id = $1
+		 ORDER BY attempt_no ASC`,
+		messageID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.MessageAttempt
+	for rows.Next() {
+		var a domain.MessageAttempt
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.AttemptNo, &a.SMTPProvider, &a.SMTPResponse, &a.Success, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, workspace_id, from_email, to_email, subject, body_text, status, scheduled_at, created_at, updated_at
+		 FROM messages
+		 WHERE workspace_id = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2`,
+		workspaceID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.Message
+	for rows.Next() {
+		var m domain.Message
+		if err := rows.Scan(
+			&m.ID, &m.WorkspaceID, &m.FromEmail, &m.ToEmail, &m.Subject, &m.BodyText, &m.Status, &m.ScheduledAt, &m.CreatedAt, &m.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
