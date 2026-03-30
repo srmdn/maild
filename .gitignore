@@ -8,11 +8,15 @@ bin/
 dist/
 coverage.out
 *.test
+server
+maild
 
 # OS/editor
 .DS_Store
 .idea/
 .vscode/
+*.log
+tmp/
 
 # Internal strategy docs (do not commit)
 docs/internal/
