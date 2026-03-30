@@ -138,6 +138,7 @@ Basic anti-abuse controls are enabled:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/release-risk-checklist.md](docs/release-risk-checklist.md)
 - [docs/PUBLIC-LAUNCH-CHECKLIST.md](docs/PUBLIC-LAUNCH-CHECKLIST.md)
+- [docs/BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md)
 
 ## License
 

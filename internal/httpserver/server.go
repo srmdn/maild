@@ -10,17 +10,21 @@ import (
 	"github.com/srmdn/maild/internal/api"
 	"github.com/srmdn/maild/internal/buildinfo"
 	"github.com/srmdn/maild/internal/config"
+	"github.com/srmdn/maild/internal/runtime"
 )
 
 type Server struct {
 	http *http.Server
+	deps *runtime.DependencyState
 }
 
-func New(cfg config.Config, logger *slog.Logger, apiHandler *api.Handler) *Server {
+func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, apiHandler *api.Handler) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/healthz", handleHealth)
-	mux.HandleFunc("/readyz", handleReady)
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		handleReady(w, r, deps)
+	})
 	apiHandler.Register(mux)
 
 	srv := &http.Server{
@@ -31,7 +35,7 @@ func New(cfg config.Config, logger *slog.Logger, apiHandler *api.Handler) *Serve
 		WriteTimeout:      cfg.WriteTimeout,
 	}
 
-	return &Server{http: srv}
+	return &Server{http: srv, deps: deps}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -70,12 +74,26 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, response{Status: "ok"})
 }
 
-func handleReady(w http.ResponseWriter, _ *http.Request) {
-	// Temporary readiness check for bootstrap phase.
+func handleReady(w http.ResponseWriter, _ *http.Request, deps *runtime.DependencyState) {
 	type response struct {
-		Status string `json:"status"`
+		Status   string `json:"status"`
+		Postgres bool   `json:"postgres"`
+		Redis    bool   `json:"redis"`
 	}
-	writeJSON(w, http.StatusOK, response{Status: "ready"})
+	postgres, redis, ready := deps.Snapshot()
+	if !ready {
+		writeJSON(w, http.StatusServiceUnavailable, response{
+			Status:   "not_ready",
+			Postgres: postgres,
+			Redis:    redis,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{
+		Status:   "ready",
+		Postgres: postgres,
+		Redis:    redis,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

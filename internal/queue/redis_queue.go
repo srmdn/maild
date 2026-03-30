@@ -32,6 +32,12 @@ func (q *RedisQueue) Client() *redis.Client {
 	return q.client
 }
 
+func (q *RedisQueue) Check(ctx context.Context) bool {
+	ctxPing, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return q.client.Ping(ctxPing).Err() == nil
+}
+
 func (q *RedisQueue) Enqueue(ctx context.Context, id int64) error {
 	return q.client.RPush(ctx, q.key, id).Err()
 }

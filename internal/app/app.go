@@ -17,6 +17,7 @@ import (
 	"github.com/srmdn/maild/internal/migrate"
 	"github.com/srmdn/maild/internal/queue"
 	"github.com/srmdn/maild/internal/ratelimit"
+	"github.com/srmdn/maild/internal/runtime"
 	"github.com/srmdn/maild/internal/service"
 	"github.com/srmdn/maild/internal/smtpclient"
 	"github.com/srmdn/maild/internal/store/postgres"
@@ -67,8 +68,9 @@ func Run() error {
 		return err
 	}
 
+	deps := runtime.NewDependencyState()
 	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey, logger)
-	server := httpserver.New(cfg, logger, apiHandler)
+	server := httpserver.New(cfg, logger, deps, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 
 	errCh := make(chan error, 1)
@@ -84,6 +86,7 @@ func Run() error {
 			errCh <- err
 		}
 	}()
+	go runtime.StartDependencyProbe(appCtx, logger, deps, store, msgQueue, 5*time.Second)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

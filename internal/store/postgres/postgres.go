@@ -37,6 +37,12 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
+func (s *Store) Check(ctx context.Context) bool {
+	ctxPing, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return s.db.PingContext(ctxPing) == nil
+}
+
 func (s *Store) EnsureDefaultWorkspace(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO workspaces (id, name) VALUES (1, 'default') ON CONFLICT (id) DO NOTHING`)
 	return err
