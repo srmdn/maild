@@ -39,8 +39,11 @@ func (w *MessageWorker) Run(ctx context.Context) error {
 			continue
 		}
 
+		w.log.Info("worker_message_processing", "message_id", id)
 		if err := w.svc.ProcessOne(ctx, id); err != nil {
 			w.log.Error("worker processing failed", "message_id", id, "error", err)
+			continue
 		}
+		w.log.Info("worker_message_processed", "message_id", id)
 	}
 }

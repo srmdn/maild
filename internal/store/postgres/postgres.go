@@ -161,6 +161,24 @@ func (s *Store) SetMessageStatus(ctx context.Context, id int64, status string) e
 	return err
 }
 
+func (s *Store) TransitionMessageStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE messages
+		 SET status = $3, updated_at = now()
+		 WHERE id = $1 AND status = $2`,
+		id, fromStatus, toStatus,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func (s *Store) NextAttemptNo(ctx context.Context, messageID int64) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM message_attempts WHERE message_id = $1`, messageID).Scan(&n)

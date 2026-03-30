@@ -67,8 +67,8 @@ func Run() error {
 		return err
 	}
 
-	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey)
-	server := httpserver.New(cfg, apiHandler)
+	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey, logger)
+	server := httpserver.New(cfg, logger, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 
 	errCh := make(chan error, 1)

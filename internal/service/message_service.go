@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type MessageStore interface {
 	CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error)
 	GetMessage(ctx context.Context, id int64) (domain.Message, error)
 	SetMessageStatus(ctx context.Context, id int64, status string) error
+	TransitionMessageStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error)
 	NextAttemptNo(ctx context.Context, messageID int64) (int, error)
 	InsertAttempt(ctx context.Context, messageID int64, attemptNo int, provider, response string, success bool) error
 }
@@ -80,7 +82,7 @@ func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fr
 		return domain.Message{}, err
 	}
 	if !allowed {
-		return domain.Message{}, errors.Join(ErrRateLimited, errors.New(reason))
+		return domain.Message{}, fmt.Errorf("%w: %s", ErrRateLimited, reason)
 	}
 
 	suppressed, err := s.store.IsSuppressed(ctx, workspaceID, toEmail)
@@ -129,6 +131,9 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 	if m.Status == "suppressed" || m.Status == "sent" {
 		return nil
 	}
+	if m.Status != "queued" {
+		return nil
+	}
 
 	suppressed, err := s.store.IsSuppressed(ctx, m.WorkspaceID, m.ToEmail)
 	if err != nil {
@@ -142,8 +147,13 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 		return s.store.SetMessageStatus(ctx, m.ID, "suppressed")
 	}
 
-	if err := s.store.SetMessageStatus(ctx, m.ID, "sending"); err != nil {
+	ok, err := s.store.TransitionMessageStatus(ctx, m.ID, "queued", "sending")
+	if err != nil {
 		return err
+	}
+	if !ok {
+		// Another worker/process already claimed this queued message.
+		return nil
 	}
 
 	attemptNo, err := s.store.NextAttemptNo(ctx, m.ID)
@@ -177,7 +187,7 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 		return err
 	}
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(backoffDuration(attemptNo))
 	return s.queue.Enqueue(ctx, m.ID)
 }
 
@@ -243,4 +253,48 @@ func extractDomain(email string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(email[at+1:]))
+}
+
+func backoffDuration(attemptNo int) time.Duration {
+	if attemptNo < 1 {
+		attemptNo = 1
+	}
+	seconds := 1 << (attemptNo - 1)
+	if seconds > 32 {
+		seconds = 32
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func RateLimitReason(err error) string {
+	const fallback = "rate_limit_exceeded"
+	if err == nil || !errors.Is(err, ErrRateLimited) {
+		return fallback
+	}
+	msg := err.Error()
+	i := strings.Index(msg, ": ")
+	if i < 0 || i+2 >= len(msg) {
+		return fallback
+	}
+	reason := strings.TrimSpace(msg[i+2:])
+	if reason == "" {
+		return fallback
+	}
+	return reason
+}
+
+func FormatQueueError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, ErrBlockedRecipientDomain) {
+		return "blocked_recipient_domain"
+	}
+	if errors.Is(err, ErrRateLimited) {
+		return fmt.Sprintf("rate_limited:%s", RateLimitReason(err))
+	}
+	if errors.Is(err, ErrBadRequest) {
+		return "bad_request"
+	}
+	return "internal_error"
 }

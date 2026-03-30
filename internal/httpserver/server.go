@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,7 +16,7 @@ type Server struct {
 	http *http.Server
 }
 
-func New(cfg config.Config, apiHandler *api.Handler) *Server {
+func New(cfg config.Config, logger *slog.Logger, apiHandler *api.Handler) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/healthz", handleHealth)
@@ -24,7 +25,7 @@ func New(cfg config.Config, apiHandler *api.Handler) *Server {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           withAccessLog(logger, mux),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

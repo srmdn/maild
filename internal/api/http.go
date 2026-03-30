@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -17,14 +18,16 @@ type Handler struct {
 	apiKeyHeader   string
 	adminAPIKey    string
 	operatorAPIKey string
+	logger         *slog.Logger
 }
 
-func NewHandler(messages *service.MessageService, apiKeyHeader, adminAPIKey, operatorAPIKey string) *Handler {
+func NewHandler(messages *service.MessageService, apiKeyHeader, adminAPIKey, operatorAPIKey string, logger *slog.Logger) *Handler {
 	return &Handler{
 		messages:       messages,
 		apiKeyHeader:   apiKeyHeader,
 		adminAPIKey:    adminAPIKey,
 		operatorAPIKey: operatorAPIKey,
+		logger:         logger,
 	}
 }
 
@@ -94,9 +97,11 @@ func (h *Handler) createMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("message_queue_failed", "workspace_id", req.WorkspaceID, "to_email", req.ToEmail, "reason", service.FormatQueueError(err))
 		return
 	}
 
+	h.logger.Info("message_queued", "message_id", m.ID, "workspace_id", m.WorkspaceID, "to_email", m.ToEmail, "status", m.Status)
 	writeJSON(w, http.StatusCreated, m)
 }
 
@@ -130,6 +135,7 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.messages.AddSuppression(r.Context(), req.WorkspaceID, req.Email, req.Reason); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("suppression_add_failed", "workspace_id", req.WorkspaceID, "email", req.Email)
 		return
 	}
 
@@ -141,6 +147,7 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 		"reason":       req.Reason,
 		"status":       "suppressed",
 	})
+	h.logger.Info("suppression_added", "workspace_id", req.WorkspaceID, "email", req.Email)
 }
 
 type createUnsubscribeRequest struct {
@@ -173,6 +180,7 @@ func (h *Handler) createUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.messages.AddUnsubscribe(r.Context(), req.WorkspaceID, req.Email, req.Reason); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("unsubscribe_add_failed", "workspace_id", req.WorkspaceID, "email", req.Email)
 		return
 	}
 
@@ -184,6 +192,7 @@ func (h *Handler) createUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		"reason":       req.Reason,
 		"status":       "unsubscribed",
 	})
+	h.logger.Info("unsubscribe_added", "workspace_id", req.WorkspaceID, "email", req.Email)
 }
 
 type upsertSMTPAccountRequest struct {
@@ -229,6 +238,7 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("smtp_account_upsert_failed", "workspace_id", req.WorkspaceID, "name", req.Name, "host", req.Host)
 		return
 	}
 
@@ -242,6 +252,7 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		"from_email":   req.FromEmail,
 		"status":       "saved_encrypted",
 	})
+	h.logger.Info("smtp_account_upserted", "workspace_id", req.WorkspaceID, "name", req.Name, "host", req.Host, "port", req.Port)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
