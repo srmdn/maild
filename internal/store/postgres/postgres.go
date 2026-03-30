@@ -59,6 +59,34 @@ func (s *Store) AddSuppression(ctx context.Context, workspaceID int64, email, re
 	return err
 }
 
+func (s *Store) UpsertSMTPAccountEncrypted(ctx context.Context, workspaceID int64, name string, encryptedPayload []byte) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO smtp_accounts (workspace_id, name, encrypted_payload)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace_id) DO UPDATE
+		 SET name = EXCLUDED.name, encrypted_payload = EXCLUDED.encrypted_payload, updated_at = now()`,
+		workspaceID, name, encryptedPayload,
+	)
+	return err
+}
+
+func (s *Store) GetSMTPAccountEncrypted(ctx context.Context, workspaceID int64) ([]byte, bool, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT encrypted_payload FROM smtp_accounts WHERE workspace_id = $1`,
+		workspaceID,
+	)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return payload, true, nil
+}
+
 func (s *Store) CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error) {
 	row := s.db.QueryRowContext(
 		ctx,

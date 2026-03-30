@@ -39,6 +39,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"/v1/suppressions",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.createSuppression)),
 	)
+	mux.HandleFunc(
+		"/v1/smtp-accounts",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
+	)
 }
 
 type createMessageRequest struct {
@@ -118,6 +122,64 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 		"email":        req.Email,
 		"reason":       req.Reason,
 		"status":       "suppressed",
+	})
+}
+
+type upsertSMTPAccountRequest struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	FromEmail   string `json:"from_email"`
+}
+
+func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req upsertSMTPAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		req.Name = "default"
+	}
+	if strings.TrimSpace(req.Host) == "" || req.Port == 0 || strings.TrimSpace(req.FromEmail) == "" {
+		http.Error(w, "host, port, and from_email are required", http.StatusBadRequest)
+		return
+	}
+
+	err := h.messages.UpsertSMTPAccount(r.Context(), domain.SMTPAccount{
+		WorkspaceID: req.WorkspaceID,
+		Name:        req.Name,
+		Host:        req.Host,
+		Port:        req.Port,
+		Username:    req.Username,
+		Password:    req.Password,
+		FromEmail:   req.FromEmail,
+	})
+	if err != nil {
+		http.Error(w, "failed to save smtp account", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": req.WorkspaceID,
+		"name":         req.Name,
+		"host":         req.Host,
+		"port":         req.Port,
+		"from_email":   req.FromEmail,
+		"status":       "saved_encrypted",
 	})
 }
 

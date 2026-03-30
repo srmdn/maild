@@ -91,10 +91,29 @@ curl -sS -X POST http://localhost:8080/v1/suppressions \
   }'
 ```
 
+Admin-only encrypted SMTP account config:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "name": "mxroute-main",
+    "host": "smtp.mxroute.com",
+    "port": 587,
+    "username": "user@example.com",
+    "password": "secret",
+    "from_email": "noreply@maild.click"
+  }'
+```
+
 `/v1/*` endpoints require API key authentication using:
 - `API_KEY_HEADER`
 - `ADMIN_API_KEY`
 - `OPERATOR_API_KEY`
+
+SMTP account credentials saved through API are encrypted at rest in PostgreSQL using AES-GCM (`ENCRYPTION_KEY_BASE64`).
 
 ## Architecture
 

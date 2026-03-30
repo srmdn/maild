@@ -12,6 +12,7 @@ import (
 
 	"github.com/srmdn/maild/internal/api"
 	"github.com/srmdn/maild/internal/config"
+	"github.com/srmdn/maild/internal/crypto"
 	"github.com/srmdn/maild/internal/httpserver"
 	"github.com/srmdn/maild/internal/migrate"
 	"github.com/srmdn/maild/internal/queue"
@@ -47,7 +48,11 @@ func Run() error {
 	defer msgQueue.Close()
 
 	sender := smtpclient.New(cfg)
-	messageService := service.NewMessageService(store, msgQueue, sender, cfg.MaxAttempts)
+	sealer, err := crypto.NewSealerFromBase64(cfg.EncryptionKeyB64)
+	if err != nil {
+		return err
+	}
+	messageService := service.NewMessageService(store, msgQueue, sender, sealer, cfg.MaxAttempts)
 	if err := messageService.Bootstrap(ctx); err != nil {
 		return err
 	}

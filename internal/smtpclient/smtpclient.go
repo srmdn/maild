@@ -9,37 +9,47 @@ import (
 )
 
 type Client struct {
-	host     string
-	port     int
-	username string
-	password string
-	from     string
+	defaultCreds Credentials
+}
+
+type Credentials struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	From     string `json:"from"`
 }
 
 func New(cfg config.Config) *Client {
 	return &Client{
-		host:     cfg.SMTPHost,
-		port:     cfg.SMTPPort,
-		username: cfg.SMTPUsername,
-		password: cfg.SMTPPassword,
-		from:     cfg.SMTPFrom,
+		defaultCreds: Credentials{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		},
 	}
 }
 
-func (c *Client) ProviderName() string {
-	return fmt.Sprintf("%s:%d", c.host, c.port)
+func (c *Client) DefaultCredentials() Credentials {
+	return c.defaultCreds
 }
 
-func (c *Client) Send(toEmail, subject, body string) error {
-	addr := fmt.Sprintf("%s:%d", c.host, c.port)
-	msg := buildMessage(c.from, toEmail, subject, body)
+func ProviderName(creds Credentials) string {
+	return fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+}
+
+func (c *Client) Send(creds Credentials, toEmail, subject, body string) error {
+	addr := fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	msg := buildMessage(creds.From, toEmail, subject, body)
 
 	var auth smtp.Auth
-	if c.username != "" || c.password != "" {
-		auth = smtp.PlainAuth("", c.username, c.password, c.host)
+	if creds.Username != "" || creds.Password != "" {
+		auth = smtp.PlainAuth("", creds.Username, creds.Password, creds.Host)
 	}
 
-	return smtp.SendMail(addr, auth, c.from, []string{toEmail}, []byte(msg))
+	return smtp.SendMail(addr, auth, creds.From, []string{toEmail}, []byte(msg))
 }
 
 func buildMessage(from, to, subject, body string) string {

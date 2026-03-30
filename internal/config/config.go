@@ -18,6 +18,7 @@ type Config struct {
 	APIKeyHeader      string
 	AdminAPIKey       string
 	OperatorAPIKey    string
+	EncryptionKeyB64  string
 
 	PostgresDSN string
 	RedisAddr   string
@@ -42,6 +43,7 @@ func Load() Config {
 		APIKeyHeader:      getEnv("API_KEY_HEADER", "X-API-Key"),
 		AdminAPIKey:       getEnv("ADMIN_API_KEY", "change-me-admin"),
 		OperatorAPIKey:    getEnv("OPERATOR_API_KEY", "change-me-operator"),
+		EncryptionKeyB64:  getEnv("ENCRYPTION_KEY_BASE64", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
 		PostgresDSN:       getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:           getIntEnv("REDIS_DB", 0),
@@ -65,6 +67,9 @@ func (c Config) Validate() error {
 	}
 	if c.AdminAPIKey == c.OperatorAPIKey {
 		return ErrInvalidConfig("ADMIN_API_KEY and OPERATOR_API_KEY must be different")
+	}
+	if strings.TrimSpace(c.EncryptionKeyB64) == "" {
+		return ErrInvalidConfig("ENCRYPTION_KEY_BASE64 must not be empty")
 	}
 	return nil
 }
