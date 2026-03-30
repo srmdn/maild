@@ -20,3 +20,4 @@ tmp/
 
 # Internal strategy docs (do not commit)
 docs/internal/
+docs/GIT-IDENTITY.md
