@@ -36,16 +36,28 @@ cp .env.example .env
 docker compose up -d
 ```
 
-3. Run the app:
+3. Apply the initial schema:
+
+```sh
+psql "postgres://maild:maild@localhost:5432/maild?sslmode=disable" -f migrations/000001_init.up.sql
+```
+
+4. Run the app:
 
 ```sh
 make run
 ```
 
-4. Check health:
+5. Check health:
 
 ```sh
 curl -sS http://localhost:8080/healthz
+```
+
+6. Open Mailpit UI (local SMTP inbox):
+
+```text
+http://localhost:8025
 ```
 
 ## Current Endpoints
@@ -53,6 +65,21 @@ curl -sS http://localhost:8080/healthz
 - `GET /`
 - `GET /healthz`
 - `GET /readyz`
+- `POST /v1/messages`
+
+Example:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "from_email": "noreply@maild.local",
+    "to_email": "user@example.com",
+    "subject": "Hello from maild",
+    "body_text": "maild first delivery test"
+  }'
+```
 
 ## Architecture
 

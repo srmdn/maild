@@ -13,10 +13,17 @@ type Config struct {
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	ShutdownTimeout   time.Duration
+	MaxAttempts       int
 
 	PostgresDSN string
 	RedisAddr   string
 	RedisDB     int
+
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 func Load() Config {
@@ -27,9 +34,15 @@ func Load() Config {
 		ReadTimeout:       getDurationEnv("APP_READ_TIMEOUT", 15*time.Second),
 		WriteTimeout:      getDurationEnv("APP_WRITE_TIMEOUT", 15*time.Second),
 		ShutdownTimeout:   getDurationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
+		MaxAttempts:       getIntEnv("APP_MAX_ATTEMPTS", 3),
 		PostgresDSN:       getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:           getIntEnv("REDIS_DB", 0),
+		SMTPHost:          getEnv("SMTP_HOST", "localhost"),
+		SMTPPort:          getIntEnv("SMTP_PORT", 1025),
+		SMTPUsername:      getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:          getEnv("SMTP_FROM", "noreply@maild.local"),
 	}
 }
 

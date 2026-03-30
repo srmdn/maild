@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/srmdn/maild/internal/api"
 	"github.com/srmdn/maild/internal/buildinfo"
 	"github.com/srmdn/maild/internal/config"
 )
@@ -14,11 +15,12 @@ type Server struct {
 	http *http.Server
 }
 
-func New(cfg config.Config) *Server {
+func New(cfg config.Config, apiHandler *api.Handler) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/readyz", handleReady)
+	apiHandler.Register(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
