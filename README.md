@@ -36,25 +36,21 @@ cp .env.example .env
 docker compose up -d
 ```
 
-3. Apply the initial schema:
-
-```sh
-psql "postgres://maild:maild@localhost:5432/maild?sslmode=disable" -f migrations/000001_init.up.sql
-```
-
-4. Run the app:
+3. Run the app:
 
 ```sh
 make run
 ```
 
-5. Check health:
+At startup, `maild` applies embedded `up` migrations automatically.
+
+4. Check health:
 
 ```sh
 curl -sS http://localhost:8080/healthz
 ```
 
-6. Open Mailpit UI (local SMTP inbox):
+5. Open Mailpit UI (local SMTP inbox):
 
 ```text
 http://localhost:8025

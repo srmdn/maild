@@ -13,6 +13,7 @@ import (
 	"github.com/srmdn/maild/internal/api"
 	"github.com/srmdn/maild/internal/config"
 	"github.com/srmdn/maild/internal/httpserver"
+	"github.com/srmdn/maild/internal/migrate"
 	"github.com/srmdn/maild/internal/queue"
 	"github.com/srmdn/maild/internal/service"
 	"github.com/srmdn/maild/internal/smtpclient"
@@ -32,6 +33,9 @@ func Run() error {
 		return err
 	}
 	defer store.Close()
+	if err := migrate.Up(ctx, store.DB()); err != nil {
+		return err
+	}
 
 	msgQueue, err := queue.NewRedis(ctx, cfg.RedisAddr, cfg.RedisDB)
 	if err != nil {
