@@ -48,6 +48,17 @@ func (s *Store) IsSuppressed(ctx context.Context, workspaceID int64, email strin
 	return exists, err
 }
 
+func (s *Store) AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO suppressions (workspace_id, email, reason)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace_id, email) DO UPDATE SET reason = EXCLUDED.reason`,
+		workspaceID, email, reason,
+	)
+	return err
+}
+
 func (s *Store) CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error) {
 	row := s.db.QueryRowContext(
 		ctx,

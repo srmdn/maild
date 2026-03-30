@@ -67,7 +67,7 @@ Example:
 
 ```sh
 curl -sS -X POST http://localhost:8080/v1/messages \
-  -H "X-API-Key: change-me" \
+  -H "X-API-Key: change-me-operator" \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
@@ -78,7 +78,23 @@ curl -sS -X POST http://localhost:8080/v1/messages \
   }'
 ```
 
-`/v1/*` endpoints require API key authentication using `API_KEY_HEADER` and `API_KEY`.
+Admin-only suppression example:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/suppressions \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "email": "user@example.com",
+    "reason": "manual block"
+  }'
+```
+
+`/v1/*` endpoints require API key authentication using:
+- `API_KEY_HEADER`
+- `ADMIN_API_KEY`
+- `OPERATOR_API_KEY`
 
 ## Architecture
 

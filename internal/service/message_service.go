@@ -11,6 +11,7 @@ import (
 type MessageStore interface {
 	EnsureDefaultWorkspace(ctx context.Context) error
 	IsSuppressed(ctx context.Context, workspaceID int64, email string) (bool, error)
+	AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error
 	CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error)
 	GetMessage(ctx context.Context, id int64) (domain.Message, error)
 	SetMessageStatus(ctx context.Context, id int64, status string) error
@@ -130,6 +131,10 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 
 func (s *MessageService) PopQueue(ctx context.Context, timeout time.Duration) (int64, bool, error) {
 	return s.queue.Dequeue(ctx, timeout)
+}
+
+func (s *MessageService) AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error {
+	return s.store.AddSuppression(ctx, workspaceID, email, reason)
 }
 
 var ErrBadRequest = errors.New("bad request")

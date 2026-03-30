@@ -52,7 +52,7 @@ func Run() error {
 		return err
 	}
 
-	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.APIKey)
+	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey)
 	server := httpserver.New(cfg, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 

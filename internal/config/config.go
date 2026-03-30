@@ -16,7 +16,8 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	MaxAttempts       int
 	APIKeyHeader      string
-	APIKey            string
+	AdminAPIKey       string
+	OperatorAPIKey    string
 
 	PostgresDSN string
 	RedisAddr   string
@@ -39,7 +40,8 @@ func Load() Config {
 		ShutdownTimeout:   getDurationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
 		MaxAttempts:       getIntEnv("APP_MAX_ATTEMPTS", 3),
 		APIKeyHeader:      getEnv("API_KEY_HEADER", "X-API-Key"),
-		APIKey:            getEnv("API_KEY", "change-me"),
+		AdminAPIKey:       getEnv("ADMIN_API_KEY", "change-me-admin"),
+		OperatorAPIKey:    getEnv("OPERATOR_API_KEY", "change-me-operator"),
 		PostgresDSN:       getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:           getIntEnv("REDIS_DB", 0),
@@ -55,8 +57,14 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.APIKeyHeader) == "" {
 		return ErrInvalidConfig("API_KEY_HEADER must not be empty")
 	}
-	if strings.TrimSpace(c.APIKey) == "" {
-		return ErrInvalidConfig("API_KEY must not be empty")
+	if strings.TrimSpace(c.AdminAPIKey) == "" {
+		return ErrInvalidConfig("ADMIN_API_KEY must not be empty")
+	}
+	if strings.TrimSpace(c.OperatorAPIKey) == "" {
+		return ErrInvalidConfig("OPERATOR_API_KEY must not be empty")
+	}
+	if c.AdminAPIKey == c.OperatorAPIKey {
+		return ErrInvalidConfig("ADMIN_API_KEY and OPERATOR_API_KEY must be different")
 	}
 	return nil
 }
