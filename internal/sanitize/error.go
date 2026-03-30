@@ -9,6 +9,12 @@ func SMTPError(raw string) string {
 	}
 
 	low := strings.ToLower(out)
+	if strings.Contains(low, "timeout") || strings.Contains(low, "i/o timeout") {
+		return "smtp timeout"
+	}
+	if strings.Contains(low, "connection refused") || strings.Contains(low, "refused") {
+		return "smtp connection refused"
+	}
 	if strings.Contains(low, "password") ||
 		strings.Contains(low, "auth") ||
 		strings.Contains(low, "credential") ||
