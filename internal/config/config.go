@@ -22,6 +22,11 @@ type Config struct {
 	RateLimitWorkspacePerHour int
 	RateLimitDomainPerHour    int
 	BlockedRecipientDomains   map[string]struct{}
+	WebhooksEnabled           bool
+	WebhookSigningSecret      string
+	WebhookSignatureHeader    string
+	WebhookTimestampHeader    string
+	WebhookMaxSkew            time.Duration
 
 	PostgresDSN string
 	RedisAddr   string
@@ -50,6 +55,11 @@ func Load() Config {
 		RateLimitWorkspacePerHour: getIntEnv("RATE_LIMIT_WORKSPACE_PER_HOUR", 400),
 		RateLimitDomainPerHour:    getIntEnv("RATE_LIMIT_DOMAIN_PER_HOUR", 200),
 		BlockedRecipientDomains:   parseDomainSet(getEnv("BLOCKED_RECIPIENT_DOMAINS", "mailinator.com,tempmail.com")),
+		WebhooksEnabled:           getBoolEnv("WEBHOOKS_ENABLED", false),
+		WebhookSigningSecret:      getEnv("WEBHOOK_SIGNING_SECRET", ""),
+		WebhookSignatureHeader:    getEnv("WEBHOOK_SIGNATURE_HEADER", "X-Webhook-Signature"),
+		WebhookTimestampHeader:    getEnv("WEBHOOK_TIMESTAMP_HEADER", "X-Webhook-Timestamp"),
+		WebhookMaxSkew:            getDurationEnv("WEBHOOK_MAX_SKEW", 5*time.Minute),
 		PostgresDSN:               getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:                   getIntEnv("REDIS_DB", 0),
@@ -82,6 +92,20 @@ func (c Config) Validate() error {
 	}
 	if c.RateLimitDomainPerHour < 1 {
 		return ErrInvalidConfig("RATE_LIMIT_DOMAIN_PER_HOUR must be >= 1")
+	}
+	if c.WebhooksEnabled {
+		if strings.TrimSpace(c.WebhookSigningSecret) == "" {
+			return ErrInvalidConfig("WEBHOOK_SIGNING_SECRET must not be empty when WEBHOOKS_ENABLED=true")
+		}
+		if strings.TrimSpace(c.WebhookSignatureHeader) == "" {
+			return ErrInvalidConfig("WEBHOOK_SIGNATURE_HEADER must not be empty when WEBHOOKS_ENABLED=true")
+		}
+		if strings.TrimSpace(c.WebhookTimestampHeader) == "" {
+			return ErrInvalidConfig("WEBHOOK_TIMESTAMP_HEADER must not be empty when WEBHOOKS_ENABLED=true")
+		}
+		if c.WebhookMaxSkew <= 0 {
+			return ErrInvalidConfig("WEBHOOK_MAX_SKEW must be > 0 when WEBHOOKS_ENABLED=true")
+		}
 	}
 	return nil
 }
@@ -117,6 +141,18 @@ func getIntEnv(key string, fallback int) int {
 		return fallback
 	}
 	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func getBoolEnv(key string, fallback bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fallback
 	}

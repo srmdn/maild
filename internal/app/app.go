@@ -71,7 +71,19 @@ func Run() error {
 	domainService := service.NewDomainService(store, domaincheck.New())
 
 	deps := runtime.NewDependencyState()
-	apiHandler := api.NewHandler(messageService, domainService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey, logger)
+	apiHandler := api.NewHandler(
+		messageService,
+		domainService,
+		cfg.APIKeyHeader,
+		cfg.AdminAPIKey,
+		cfg.OperatorAPIKey,
+		cfg.WebhooksEnabled,
+		cfg.WebhookSignatureHeader,
+		cfg.WebhookTimestampHeader,
+		cfg.WebhookSigningSecret,
+		cfg.WebhookMaxSkew,
+		logger,
+	)
 	server := httpserver.New(cfg, logger, deps, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 

@@ -8,6 +8,16 @@ Thanks for contributing to `maild`.
 - Humans are accountable for final code, docs, tests, and releases.
 - AI assistance is allowed, but must be disclosed in PR descriptions when material.
 
+## One-Command Setup
+
+Bring up a local contributor environment with:
+
+```sh
+make setup
+```
+
+This command creates `.env` from `.env.example` (if missing), downloads Go dependencies, and starts local Docker services.
+
 ## AI Contribution Disclosure
 
 If AI materially influenced a PR, include:
@@ -46,4 +56,3 @@ Before requesting review for mail flow changes:
 
 Please do not open public issues for vulnerabilities.
 See [SECURITY.md](SECURITY.md).
-

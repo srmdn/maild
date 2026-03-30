@@ -24,19 +24,13 @@ Bootstrap initialized. Core app scaffold exists, but message queue/worker delive
 
 ## Quick Start
 
-1. Copy environment defaults:
+1. Bootstrap local development in one command:
 
 ```sh
-cp .env.example .env
+make setup
 ```
 
-2. Start local dependencies:
-
-```sh
-docker compose up -d
-```
-
-3. Run the app:
+2. Run the app:
 
 ```sh
 make run
@@ -44,13 +38,13 @@ make run
 
 At startup, `maild` applies embedded `up` migrations automatically.
 
-4. Check health:
+3. Check health:
 
 ```sh
 curl -sS http://localhost:8080/healthz
 ```
 
-5. Open Mailpit UI (local SMTP inbox):
+4. Open Mailpit UI (local SMTP inbox):
 
 ```text
 http://localhost:8025
@@ -62,6 +56,7 @@ http://localhost:8025
 - `GET /healthz`
 - `GET /readyz`
 - `POST /v1/messages`
+- `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
 
 Example:
 
@@ -157,6 +152,20 @@ curl -sS "http://localhost:8080/v1/messages/timeline?message_id=1" \
   -H "X-API-Key: change-me-operator"
 ```
 
+Provider webhook event ingest (signature required):
+
+```sh
+body='{"workspace_id":1,"type":"bounce","email":"user@example.com","reason":"hard_bounce"}'
+ts="$(date +%s)"
+sig="$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SIGNING_SECRET" -hex | sed 's/^.* //')"
+
+curl -sS -X POST http://localhost:8080/v1/webhooks/events \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Timestamp: $ts" \
+  -H "X-Webhook-Signature: v1=$sig" \
+  -d "$body"
+```
+
 `/v1/*` endpoints require API key authentication using:
 - `API_KEY_HEADER`
 - `ADMIN_API_KEY`
@@ -168,6 +177,7 @@ Basic anti-abuse controls are enabled:
 - hourly workspace rate limit (`RATE_LIMIT_WORKSPACE_PER_HOUR`)
 - hourly recipient-domain rate limit (`RATE_LIMIT_DOMAIN_PER_HOUR`)
 - blocked recipient domain list (`BLOCKED_RECIPIENT_DOMAINS`)
+- signed webhook verification with replay window (`WEBHOOK_*` config, when enabled)
 
 ## Architecture
 
@@ -183,8 +193,5 @@ GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
 ## Governance Docs
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
-- [AGENTS.md](AGENTS.md)
-- [CLAUDE.md](CLAUDE.md)
 - [SECURITY.md](SECURITY.md)
-- [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md)
 - [docs/release-risk-checklist.md](docs/release-risk-checklist.md)

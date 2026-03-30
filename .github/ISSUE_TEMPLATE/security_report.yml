@@ -1,0 +1,24 @@
+name: Security Report Pointer
+description: Do not disclose vulnerabilities publicly. Use private reporting instead.
+title: "security: private report submitted"
+labels:
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include vulnerability details in a public issue.
+
+        Report vulnerabilities privately using the process documented in `SECURITY.md`.
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Email
+      description: Optional maintainer contact for follow-up.
+      placeholder: you@example.com
+  - type: textarea
+    id: metadata
+    attributes:
+      label: Non-Sensitive Metadata
+      description: Optional tracking metadata only (for example date sent, channel used). No exploit details.
+      placeholder: Sent to security@... on YYYY-MM-DD

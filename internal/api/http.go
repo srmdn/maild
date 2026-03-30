@@ -3,35 +3,54 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/srmdn/maild/internal/auth"
 	"github.com/srmdn/maild/internal/domain"
 	"github.com/srmdn/maild/internal/domaincheck"
 	"github.com/srmdn/maild/internal/sanitize"
 	"github.com/srmdn/maild/internal/service"
+	"github.com/srmdn/maild/internal/webhooksig"
 )
 
 type Handler struct {
-	messages       *service.MessageService
-	domains        *service.DomainService
-	apiKeyHeader   string
-	adminAPIKey    string
-	operatorAPIKey string
-	logger         *slog.Logger
+	messages               *service.MessageService
+	domains                *service.DomainService
+	apiKeyHeader           string
+	adminAPIKey            string
+	operatorAPIKey         string
+	webhooksEnabled        bool
+	webhookSignatureHeader string
+	webhookTimestampHeader string
+	webhookVerifier        *webhooksig.Verifier
+	logger                 *slog.Logger
 }
 
-func NewHandler(messages *service.MessageService, domains *service.DomainService, apiKeyHeader, adminAPIKey, operatorAPIKey string, logger *slog.Logger) *Handler {
+func NewHandler(
+	messages *service.MessageService,
+	domains *service.DomainService,
+	apiKeyHeader, adminAPIKey, operatorAPIKey string,
+	webhooksEnabled bool,
+	webhookSignatureHeader, webhookTimestampHeader, webhookSigningSecret string,
+	webhookMaxSkew time.Duration,
+	logger *slog.Logger,
+) *Handler {
 	return &Handler{
-		messages:       messages,
-		domains:        domains,
-		apiKeyHeader:   apiKeyHeader,
-		adminAPIKey:    adminAPIKey,
-		operatorAPIKey: operatorAPIKey,
-		logger:         logger,
+		messages:               messages,
+		domains:                domains,
+		apiKeyHeader:           apiKeyHeader,
+		adminAPIKey:            adminAPIKey,
+		operatorAPIKey:         operatorAPIKey,
+		webhooksEnabled:        webhooksEnabled,
+		webhookSignatureHeader: webhookSignatureHeader,
+		webhookTimestampHeader: webhookTimestampHeader,
+		webhookVerifier:        webhooksig.NewVerifier(webhookSigningSecret, webhookMaxSkew),
+		logger:                 logger,
 	}
 }
 
@@ -72,6 +91,91 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"/v1/messages/logs",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
 	)
+	if h.webhooksEnabled {
+		mux.HandleFunc("/v1/webhooks/events", h.receiveWebhookEvent)
+	}
+}
+
+type webhookEventRequest struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Type        string `json:"type"`
+	Email       string `json:"email"`
+	Reason      string `json:"reason"`
+}
+
+func (h *Handler) receiveWebhookEvent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "invalid webhook payload", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.webhookVerifier.Verify(
+		r.Header.Get(h.webhookTimestampHeader),
+		r.Header.Get(h.webhookSignatureHeader),
+		body,
+		time.Now().UTC(),
+	); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid webhook signature")
+		h.logger.Warn("webhook_signature_invalid", "reason", err.Error())
+		return
+	}
+
+	var req webhookEventRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(req.Type))
+	email := strings.TrimSpace(req.Email)
+	if email == "" {
+		http.Error(w, "email is required", http.StatusBadRequest)
+		return
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	switch eventType {
+	case "bounce", "complaint":
+		if reason == "" {
+			reason = "provider_" + eventType
+		}
+		if err := h.messages.AddSuppression(r.Context(), req.WorkspaceID, email, reason); err != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
+			return
+		}
+	case "unsubscribe":
+		if reason == "" {
+			reason = "provider_unsubscribe"
+		}
+		if err := h.messages.AddUnsubscribe(r.Context(), req.WorkspaceID, email, reason); err != nil {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
+			return
+		}
+	default:
+		http.Error(w, "unsupported webhook type", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":       "accepted",
+		"workspace_id": req.WorkspaceID,
+		"type":         eventType,
+		"email":        email,
+	})
+	h.logger.Info("webhook_event_accepted", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
 }
 
 type createMessageRequest struct {

@@ -1,7 +1,12 @@
 APP_NAME=maild
 MAIN_PACKAGE=./cmd/server
 
-.PHONY: run build test tidy
+.PHONY: setup run build test tidy
+
+setup:
+	@if [ ! -f .env ]; then cp .env.example .env; fi
+	go mod download
+	docker compose up -d
 
 run:
 	go run $(MAIN_PACKAGE)
@@ -15,4 +20,3 @@ test:
 
 tidy:
 	go mod tidy
-
