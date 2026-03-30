@@ -13,6 +13,7 @@ import (
 	"github.com/srmdn/maild/internal/api"
 	"github.com/srmdn/maild/internal/config"
 	"github.com/srmdn/maild/internal/crypto"
+	"github.com/srmdn/maild/internal/domaincheck"
 	"github.com/srmdn/maild/internal/httpserver"
 	"github.com/srmdn/maild/internal/migrate"
 	"github.com/srmdn/maild/internal/queue"
@@ -67,9 +68,10 @@ func Run() error {
 	if err := messageService.Bootstrap(ctx); err != nil {
 		return err
 	}
+	domainService := service.NewDomainService(store, domaincheck.New())
 
 	deps := runtime.NewDependencyState()
-	apiHandler := api.NewHandler(messageService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey, logger)
+	apiHandler := api.NewHandler(messageService, domainService, cfg.APIKeyHeader, cfg.AdminAPIKey, cfg.OperatorAPIKey, logger)
 	server := httpserver.New(cfg, logger, deps, apiHandler)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 

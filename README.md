@@ -104,6 +104,19 @@ curl -sS -X POST http://localhost:8080/v1/unsubscribes \
   }'
 ```
 
+Domain readiness check example (SPF/DKIM/DMARC):
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/domains/readiness \
+  -H "X-API-Key: change-me-operator" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "domain": "maild.click",
+    "dkim_selector": "default"
+  }'
+```
+
 Admin-only encrypted SMTP account config:
 
 ```sh

@@ -82,6 +82,17 @@ func (s *Store) AddUnsubscribe(ctx context.Context, workspaceID int64, email, re
 	return err
 }
 
+func (s *Store) UpsertDomainVerification(ctx context.Context, workspaceID int64, domain string, verified bool) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO domains (workspace_id, domain, verified)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace_id, domain) DO UPDATE SET verified = EXCLUDED.verified`,
+		workspaceID, domain, verified,
+	)
+	return err
+}
+
 func (s *Store) UpsertSMTPAccountEncrypted(ctx context.Context, workspaceID int64, name string, encryptedPayload []byte) error {
 	_, err := s.db.ExecContext(
 		ctx,

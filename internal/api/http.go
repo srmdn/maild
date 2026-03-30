@@ -9,21 +9,24 @@ import (
 
 	"github.com/srmdn/maild/internal/auth"
 	"github.com/srmdn/maild/internal/domain"
+	"github.com/srmdn/maild/internal/domaincheck"
 	"github.com/srmdn/maild/internal/sanitize"
 	"github.com/srmdn/maild/internal/service"
 )
 
 type Handler struct {
 	messages       *service.MessageService
+	domains        *service.DomainService
 	apiKeyHeader   string
 	adminAPIKey    string
 	operatorAPIKey string
 	logger         *slog.Logger
 }
 
-func NewHandler(messages *service.MessageService, apiKeyHeader, adminAPIKey, operatorAPIKey string, logger *slog.Logger) *Handler {
+func NewHandler(messages *service.MessageService, domains *service.DomainService, apiKeyHeader, adminAPIKey, operatorAPIKey string, logger *slog.Logger) *Handler {
 	return &Handler{
 		messages:       messages,
+		domains:        domains,
 		apiKeyHeader:   apiKeyHeader,
 		adminAPIKey:    adminAPIKey,
 		operatorAPIKey: operatorAPIKey,
@@ -51,6 +54,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(
 		"/v1/smtp-accounts",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
+	)
+	mux.HandleFunc(
+		"/v1/domains/readiness",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.checkDomainReadiness)),
 	)
 }
 
@@ -255,6 +262,50 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("smtp_account_upserted", "workspace_id", req.WorkspaceID, "name", req.Name, "host", req.Host, "port", req.Port)
 }
 
+type checkDomainReadinessRequest struct {
+	WorkspaceID  int64  `json:"workspace_id"`
+	Domain       string `json:"domain"`
+	DKIMSelector string `json:"dkim_selector"`
+}
+
+func (h *Handler) checkDomainReadiness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req checkDomainReadinessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+	if strings.TrimSpace(req.Domain) == "" {
+		http.Error(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.domains.CheckReadiness(r.Context(), req.WorkspaceID, req.Domain, req.DKIMSelector)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("domain_readiness_failed", "workspace_id", req.WorkspaceID, "domain", req.Domain)
+		return
+	}
+
+	writeDomainReadinessJSON(w, http.StatusOK, result)
+	h.logger.Info(
+		"domain_readiness_checked",
+		"workspace_id", req.WorkspaceID,
+		"domain", result.Domain,
+		"spf", result.SPFValid,
+		"dkim", result.DKIMValid,
+		"dmarc", result.DMARCValid,
+		"ready", result.Ready,
+	)
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -265,4 +316,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func writeDomainReadinessJSON(w http.ResponseWriter, status int, payload domaincheck.Result) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }
