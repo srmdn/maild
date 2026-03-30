@@ -17,6 +17,8 @@ type MessageStore interface {
 	EnsureDefaultWorkspace(ctx context.Context) error
 	IsSuppressed(ctx context.Context, workspaceID int64, email string) (bool, error)
 	AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error
+	IsUnsubscribed(ctx context.Context, workspaceID int64, email string) (bool, error)
+	AddUnsubscribe(ctx context.Context, workspaceID int64, email, reason string) error
 	UpsertSMTPAccountEncrypted(ctx context.Context, workspaceID int64, name string, encryptedPayload []byte) error
 	GetSMTPAccountEncrypted(ctx context.Context, workspaceID int64) ([]byte, bool, error)
 	CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error)
@@ -85,9 +87,13 @@ func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fr
 	if err != nil {
 		return domain.Message{}, err
 	}
+	unsubscribed, err := s.store.IsUnsubscribed(ctx, workspaceID, toEmail)
+	if err != nil {
+		return domain.Message{}, err
+	}
 
 	status := "queued"
-	if suppressed {
+	if suppressed || unsubscribed {
 		status = "suppressed"
 	}
 
@@ -122,6 +128,18 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 
 	if m.Status == "suppressed" || m.Status == "sent" {
 		return nil
+	}
+
+	suppressed, err := s.store.IsSuppressed(ctx, m.WorkspaceID, m.ToEmail)
+	if err != nil {
+		return err
+	}
+	unsubscribed, err := s.store.IsUnsubscribed(ctx, m.WorkspaceID, m.ToEmail)
+	if err != nil {
+		return err
+	}
+	if suppressed || unsubscribed {
+		return s.store.SetMessageStatus(ctx, m.ID, "suppressed")
 	}
 
 	if err := s.store.SetMessageStatus(ctx, m.ID, "sending"); err != nil {
@@ -169,6 +187,10 @@ func (s *MessageService) PopQueue(ctx context.Context, timeout time.Duration) (i
 
 func (s *MessageService) AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error {
 	return s.store.AddSuppression(ctx, workspaceID, email, reason)
+}
+
+func (s *MessageService) AddUnsubscribe(ctx context.Context, workspaceID int64, email, reason string) error {
+	return s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
 }
 
 func (s *MessageService) UpsertSMTPAccount(ctx context.Context, account domain.SMTPAccount) error {

@@ -91,6 +91,19 @@ curl -sS -X POST http://localhost:8080/v1/suppressions \
   }'
 ```
 
+Admin-only unsubscribe example:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/unsubscribes \
+  -H "X-API-Key: change-me-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "email": "user@example.com",
+    "reason": "user clicked unsubscribe"
+  }'
+```
+
 Admin-only encrypted SMTP account config:
 
 ```sh

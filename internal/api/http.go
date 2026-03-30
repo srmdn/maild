@@ -42,6 +42,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.createSuppression)),
 	)
 	mux.HandleFunc(
+		"/v1/unsubscribes",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.createUnsubscribe)),
+	)
+	mux.HandleFunc(
 		"/v1/smtp-accounts",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
 	)
@@ -136,6 +140,49 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 		"email":        req.Email,
 		"reason":       req.Reason,
 		"status":       "suppressed",
+	})
+}
+
+type createUnsubscribeRequest struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Email       string `json:"email"`
+	Reason      string `json:"reason"`
+}
+
+func (h *Handler) createUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req createUnsubscribeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+	if strings.TrimSpace(req.Email) == "" {
+		http.Error(w, "email is required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		req.Reason = "user_unsubscribed"
+	}
+
+	if err := h.messages.AddUnsubscribe(r.Context(), req.WorkspaceID, req.Email, req.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"workspace_id": req.WorkspaceID,
+		"email":        req.Email,
+		"reason":       req.Reason,
+		"status":       "unsubscribed",
 	})
 }
 

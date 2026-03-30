@@ -59,6 +59,23 @@ func (s *Store) AddSuppression(ctx context.Context, workspaceID int64, email, re
 	return err
 }
 
+func (s *Store) IsUnsubscribed(ctx context.Context, workspaceID int64, email string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM unsubscribes WHERE workspace_id = $1 AND email = $2)`, workspaceID, email).Scan(&exists)
+	return exists, err
+}
+
+func (s *Store) AddUnsubscribe(ctx context.Context, workspaceID int64, email, reason string) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO unsubscribes (workspace_id, email, reason)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace_id, email) DO UPDATE SET reason = EXCLUDED.reason`,
+		workspaceID, email, reason,
+	)
+	return err
+}
+
 func (s *Store) UpsertSMTPAccountEncrypted(ctx context.Context, workspaceID int64, name string, encryptedPayload []byte) error {
 	_, err := s.db.ExecContext(
 		ctx,
