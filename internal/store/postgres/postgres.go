@@ -170,7 +170,7 @@ func (s *Store) SetActiveSMTPAccount(ctx context.Context, workspaceID int64, nam
 func (s *Store) ListSMTPAccounts(ctx context.Context, workspaceID int64) ([]domain.SMTPAccountSummary, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT workspace_id, name, is_active, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		`SELECT workspace_id, name, is_active, updated_at
 		 FROM smtp_accounts
 		 WHERE workspace_id = $1
 		 ORDER BY is_active DESC, updated_at DESC`,
@@ -190,6 +190,22 @@ func (s *Store) ListSMTPAccounts(ctx context.Context, workspaceID int64) ([]doma
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) CountFailedAttemptsByProviderSince(ctx context.Context, workspaceID int64, provider string, since time.Time) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(1)
+		 FROM message_attempts ma
+		 JOIN messages m ON m.id = ma.message_id
+		 WHERE m.workspace_id = $1
+		   AND ma.smtp_provider = $2
+		   AND ma.success = FALSE
+		   AND ma.created_at >= $3`,
+		workspaceID, provider, since,
+	).Scan(&count)
+	return count, err
 }
 
 func (s *Store) CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error) {

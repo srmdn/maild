@@ -28,6 +28,10 @@ type Config struct {
 	WebhookTimestampHeader    string
 	WebhookMaxSkew            time.Duration
 	WebhookApplyMaxAttempts   int
+	AutoFailoverEnabled       bool
+	AutoFailoverFailures      int
+	AutoFailoverWindow        time.Duration
+	AutoFailoverCooldown      time.Duration
 
 	PostgresDSN string
 	RedisAddr   string
@@ -62,6 +66,10 @@ func Load() Config {
 		WebhookTimestampHeader:    getEnv("WEBHOOK_TIMESTAMP_HEADER", "X-Webhook-Timestamp"),
 		WebhookMaxSkew:            getDurationEnv("WEBHOOK_MAX_SKEW", 5*time.Minute),
 		WebhookApplyMaxAttempts:   getIntEnv("WEBHOOK_APPLY_MAX_ATTEMPTS", 3),
+		AutoFailoverEnabled:       getBoolEnv("AUTO_FAILOVER_ENABLED", true),
+		AutoFailoverFailures:      getIntEnv("AUTO_FAILOVER_FAILURE_THRESHOLD", 3),
+		AutoFailoverWindow:        getDurationEnv("AUTO_FAILOVER_WINDOW", 5*time.Minute),
+		AutoFailoverCooldown:      getDurationEnv("AUTO_FAILOVER_COOLDOWN", 2*time.Minute),
 		PostgresDSN:               getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisDB:                   getIntEnv("REDIS_DB", 0),
@@ -110,6 +118,17 @@ func (c Config) Validate() error {
 		}
 		if c.WebhookApplyMaxAttempts < 1 {
 			return ErrInvalidConfig("WEBHOOK_APPLY_MAX_ATTEMPTS must be >= 1 when WEBHOOKS_ENABLED=true")
+		}
+	}
+	if c.AutoFailoverEnabled {
+		if c.AutoFailoverFailures < 1 {
+			return ErrInvalidConfig("AUTO_FAILOVER_FAILURE_THRESHOLD must be >= 1 when AUTO_FAILOVER_ENABLED=true")
+		}
+		if c.AutoFailoverWindow <= 0 {
+			return ErrInvalidConfig("AUTO_FAILOVER_WINDOW must be > 0 when AUTO_FAILOVER_ENABLED=true")
+		}
+		if c.AutoFailoverCooldown < 0 {
+			return ErrInvalidConfig("AUTO_FAILOVER_COOLDOWN must be >= 0 when AUTO_FAILOVER_ENABLED=true")
 		}
 	}
 	return nil

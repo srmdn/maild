@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type SMTPAccount struct {
 	WorkspaceID int64  `json:"workspace_id"`
 	Name        string `json:"name"`
@@ -11,8 +13,8 @@ type SMTPAccount struct {
 }
 
 type SMTPAccountSummary struct {
-	WorkspaceID int64  `json:"workspace_id"`
-	Name        string `json:"name"`
-	Active      bool   `json:"active"`
-	UpdatedAt   string `json:"updated_at"`
+	WorkspaceID int64     `json:"workspace_id"`
+	Name        string    `json:"name"`
+	Active      bool      `json:"active"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

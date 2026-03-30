@@ -24,6 +24,7 @@ type MessageStore interface {
 	GetSMTPAccountEncrypted(ctx context.Context, workspaceID int64) ([]byte, bool, error)
 	SetActiveSMTPAccount(ctx context.Context, workspaceID int64, name string) error
 	ListSMTPAccounts(ctx context.Context, workspaceID int64) ([]domain.SMTPAccountSummary, error)
+	CountFailedAttemptsByProviderSince(ctx context.Context, workspaceID int64, provider string, since time.Time) (int64, error)
 	CreateMessage(ctx context.Context, m domain.Message) (domain.Message, error)
 	GetMessage(ctx context.Context, id int64) (domain.Message, error)
 	SetMessageStatus(ctx context.Context, id int64, status string) error
@@ -62,14 +63,27 @@ type MessageService struct {
 	webhookApplyMaxAttempts int
 	defaultWorkspaceRate    int
 	defaultDomainRate       int
+	autoFailoverEnabled     bool
+	autoFailoverFailures    int
+	autoFailoverWindow      time.Duration
+	autoFailoverCooldown    time.Duration
 }
 
-func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, limiter RateLimiter, blockedRecipientDomains map[string]struct{}, maxAttempts int, webhookApplyMaxAttempts int, defaultWorkspaceRate int, defaultDomainRate int) *MessageService {
+func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, limiter RateLimiter, blockedRecipientDomains map[string]struct{}, maxAttempts int, webhookApplyMaxAttempts int, defaultWorkspaceRate int, defaultDomainRate int, autoFailoverEnabled bool, autoFailoverFailures int, autoFailoverWindow, autoFailoverCooldown time.Duration) *MessageService {
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
 	if webhookApplyMaxAttempts < 1 {
 		webhookApplyMaxAttempts = 1
+	}
+	if autoFailoverFailures < 1 {
+		autoFailoverFailures = 1
+	}
+	if autoFailoverWindow <= 0 {
+		autoFailoverWindow = 5 * time.Minute
+	}
+	if autoFailoverCooldown < 0 {
+		autoFailoverCooldown = 0
 	}
 	return &MessageService{
 		store:                   store,
@@ -82,6 +96,10 @@ func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclien
 		webhookApplyMaxAttempts: webhookApplyMaxAttempts,
 		defaultWorkspaceRate:    defaultWorkspaceRate,
 		defaultDomainRate:       defaultDomainRate,
+		autoFailoverEnabled:     autoFailoverEnabled,
+		autoFailoverFailures:    autoFailoverFailures,
+		autoFailoverWindow:      autoFailoverWindow,
+		autoFailoverCooldown:    autoFailoverCooldown,
 	}
 }
 
@@ -228,10 +246,11 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 	if err != nil {
 		return err
 	}
+	provider := smtpclient.ProviderName(creds)
 
 	err = s.sender.Send(creds, m.ToEmail, m.Subject, m.BodyText)
 	if err == nil {
-		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, smtpclient.ProviderName(creds), "accepted by smtp server", true); err != nil {
+		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, "accepted by smtp server", true); err != nil {
 			return err
 		}
 		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
@@ -239,14 +258,30 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			MessageID:   m.ID,
 			EventType:   "message_sent",
 			Quantity:    1,
-			Metadata:    `{"provider":"` + smtpclient.ProviderName(creds) + `"}`,
+			Metadata:    `{"provider":"` + provider + `"}`,
 		})
 		return s.store.SetMessageStatus(ctx, m.ID, "sent")
 	}
 
 	safeErr := sanitize.SMTPError(err.Error())
-	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, smtpclient.ProviderName(creds), safeErr, false); insertErr != nil {
+	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, safeErr, false); insertErr != nil {
 		return insertErr
+	}
+	_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+		WorkspaceID: m.WorkspaceID,
+		MessageID:   m.ID,
+		EventType:   "message_send_error",
+		Quantity:    1,
+		Metadata:    jsonMetadata(map[string]string{"provider": provider, "error": safeErr}),
+	})
+	if switched, toProvider, switchErr := s.tryAutoFailover(ctx, m.WorkspaceID, provider); switchErr == nil && switched {
+		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+			WorkspaceID: m.WorkspaceID,
+			MessageID:   m.ID,
+			EventType:   "provider_auto_failover",
+			Quantity:    1,
+			Metadata:    jsonMetadata(map[string]string{"from": provider, "to": toProvider}),
+		})
 	}
 
 	if attemptNo >= s.maxAttempts {
@@ -255,7 +290,7 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			MessageID:   m.ID,
 			EventType:   "message_failed",
 			Quantity:    1,
-			Metadata:    `{"provider":"` + smtpclient.ProviderName(creds) + `"}`,
+			Metadata:    `{"provider":"` + provider + `"}`,
 		})
 		return s.store.SetMessageStatus(ctx, m.ID, "failed")
 	}
@@ -582,4 +617,62 @@ func normalizeDomains(in []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func jsonMetadata(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func (s *MessageService) tryAutoFailover(ctx context.Context, workspaceID int64, currentProvider string) (bool, string, error) {
+	if !s.autoFailoverEnabled {
+		return false, "", nil
+	}
+	since := time.Now().UTC().Add(-s.autoFailoverWindow)
+	failures, err := s.store.CountFailedAttemptsByProviderSince(ctx, workspaceID, currentProvider, since)
+	if err != nil {
+		return false, "", err
+	}
+	if failures < int64(s.autoFailoverFailures) {
+		return false, "", nil
+	}
+
+	accounts, err := s.store.ListSMTPAccounts(ctx, workspaceID)
+	if err != nil {
+		return false, "", err
+	}
+	if len(accounts) < 2 {
+		return false, "", nil
+	}
+
+	var active *domain.SMTPAccountSummary
+	var standby *domain.SMTPAccountSummary
+	for i := range accounts {
+		a := accounts[i]
+		if a.Active {
+			active = &a
+			continue
+		}
+		if standby == nil {
+			tmp := a
+			standby = &tmp
+		}
+	}
+	if active == nil || standby == nil {
+		return false, "", nil
+	}
+	if time.Since(active.UpdatedAt) < s.autoFailoverCooldown {
+		return false, "", nil
+	}
+
+	if err := s.store.SetActiveSMTPAccount(ctx, workspaceID, standby.Name); err != nil {
+		return false, "", err
+	}
+	return true, standby.Name, nil
 }

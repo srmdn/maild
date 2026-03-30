@@ -197,6 +197,10 @@ Webhook reliability behavior:
 - each webhook apply action uses bounded retries (`WEBHOOK_APPLY_MAX_ATTEMPTS`)
 - malformed/unsupported streams are persisted as dead-letter webhook events for audit
 
+Provider failover behavior:
+- manual switch via `POST /v1/smtp-accounts/activate`
+- automatic switch to standby account when active provider repeatedly fails (`AUTO_FAILOVER_*` settings)
+
 Operator webhook logs view:
 
 ```sh

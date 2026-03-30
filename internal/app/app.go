@@ -67,6 +67,10 @@ func Run() error {
 		cfg.WebhookApplyMaxAttempts,
 		cfg.RateLimitWorkspacePerHour,
 		cfg.RateLimitDomainPerHour,
+		cfg.AutoFailoverEnabled,
+		cfg.AutoFailoverFailures,
+		cfg.AutoFailoverWindow,
+		cfg.AutoFailoverCooldown,
 	)
 	if err := messageService.Bootstrap(ctx); err != nil {
 		return err
