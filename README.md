@@ -85,6 +85,7 @@ curl -sS -X POST http://localhost:8080/v1/messages \
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/release-risk-checklist.md](docs/release-risk-checklist.md)
+- [docs/PUBLIC-LAUNCH-CHECKLIST.md](docs/PUBLIC-LAUNCH-CHECKLIST.md)
 
 ## License
 
