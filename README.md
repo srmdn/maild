@@ -115,6 +115,11 @@ curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
 
 SMTP account credentials saved through API are encrypted at rest in PostgreSQL using AES-GCM (`ENCRYPTION_KEY_BASE64`).
 
+Basic anti-abuse controls are enabled:
+- hourly workspace rate limit (`RATE_LIMIT_WORKSPACE_PER_HOUR`)
+- hourly recipient-domain rate limit (`RATE_LIMIT_DOMAIN_PER_HOUR`)
+- blocked recipient domain list (`BLOCKED_RECIPIENT_DOMAINS`)
+
 ## Architecture
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

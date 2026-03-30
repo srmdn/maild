@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/srmdn/maild/internal/crypto"
@@ -30,24 +31,32 @@ type MessageQueue interface {
 	Dequeue(ctx context.Context, timeout time.Duration) (int64, bool, error)
 }
 
-type MessageService struct {
-	store       MessageStore
-	queue       MessageQueue
-	sender      *smtpclient.Client
-	sealer      *crypto.Sealer
-	maxAttempts int
+type RateLimiter interface {
+	Allow(ctx context.Context, workspaceID int64, recipientDomain string) (bool, string, error)
 }
 
-func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, maxAttempts int) *MessageService {
+type MessageService struct {
+	store                   MessageStore
+	queue                   MessageQueue
+	sender                  *smtpclient.Client
+	sealer                  *crypto.Sealer
+	limiter                 RateLimiter
+	blockedRecipientDomains map[string]struct{}
+	maxAttempts             int
+}
+
+func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclient.Client, sealer *crypto.Sealer, limiter RateLimiter, blockedRecipientDomains map[string]struct{}, maxAttempts int) *MessageService {
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
 	return &MessageService{
-		store:       store,
-		queue:       queue,
-		sender:      sender,
-		sealer:      sealer,
-		maxAttempts: maxAttempts,
+		store:                   store,
+		queue:                   queue,
+		sender:                  sender,
+		sealer:                  sealer,
+		limiter:                 limiter,
+		blockedRecipientDomains: blockedRecipientDomains,
+		maxAttempts:             maxAttempts,
 	}
 }
 
@@ -56,6 +65,22 @@ func (s *MessageService) Bootstrap(ctx context.Context) error {
 }
 
 func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fromEmail, toEmail, subject, body string) (domain.Message, error) {
+	recipientDomain := extractDomain(toEmail)
+	if recipientDomain == "" {
+		return domain.Message{}, ErrBadRequest
+	}
+	if _, blocked := s.blockedRecipientDomains[recipientDomain]; blocked {
+		return domain.Message{}, ErrBlockedRecipientDomain
+	}
+
+	allowed, reason, err := s.limiter.Allow(ctx, workspaceID, recipientDomain)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	if !allowed {
+		return domain.Message{}, errors.Join(ErrRateLimited, errors.New(reason))
+	}
+
 	suppressed, err := s.store.IsSuppressed(ctx, workspaceID, toEmail)
 	if err != nil {
 		return domain.Message{}, err
@@ -187,3 +212,13 @@ func (s *MessageService) resolveCredentials(ctx context.Context, workspaceID int
 }
 
 var ErrBadRequest = errors.New("bad request")
+var ErrRateLimited = errors.New("rate limited")
+var ErrBlockedRecipientDomain = errors.New("blocked recipient domain")
+
+func extractDomain(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(email[at+1:]))
+}

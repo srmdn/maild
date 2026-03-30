@@ -16,6 +16,7 @@ import (
 	"github.com/srmdn/maild/internal/httpserver"
 	"github.com/srmdn/maild/internal/migrate"
 	"github.com/srmdn/maild/internal/queue"
+	"github.com/srmdn/maild/internal/ratelimit"
 	"github.com/srmdn/maild/internal/service"
 	"github.com/srmdn/maild/internal/smtpclient"
 	"github.com/srmdn/maild/internal/store/postgres"
@@ -52,7 +53,16 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	messageService := service.NewMessageService(store, msgQueue, sender, sealer, cfg.MaxAttempts)
+	limiter := ratelimit.NewRedisLimiter(msgQueue.Client(), cfg.RateLimitWorkspacePerHour, cfg.RateLimitDomainPerHour)
+	messageService := service.NewMessageService(
+		store,
+		msgQueue,
+		sender,
+		sealer,
+		limiter,
+		cfg.BlockedRecipientDomains,
+		cfg.MaxAttempts,
+	)
 	if err := messageService.Bootstrap(ctx); err != nil {
 		return err
 	}

@@ -8,17 +8,20 @@ import (
 )
 
 type Config struct {
-	AppEnv            string
-	Addr              string
-	ReadHeaderTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	ShutdownTimeout   time.Duration
-	MaxAttempts       int
-	APIKeyHeader      string
-	AdminAPIKey       string
-	OperatorAPIKey    string
-	EncryptionKeyB64  string
+	AppEnv                    string
+	Addr                      string
+	ReadHeaderTimeout         time.Duration
+	ReadTimeout               time.Duration
+	WriteTimeout              time.Duration
+	ShutdownTimeout           time.Duration
+	MaxAttempts               int
+	APIKeyHeader              string
+	AdminAPIKey               string
+	OperatorAPIKey            string
+	EncryptionKeyB64          string
+	RateLimitWorkspacePerHour int
+	RateLimitDomainPerHour    int
+	BlockedRecipientDomains   map[string]struct{}
 
 	PostgresDSN string
 	RedisAddr   string
@@ -33,25 +36,28 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		AppEnv:            getEnv("APP_ENV", "development"),
-		Addr:              getEnv("APP_ADDR", ":8080"),
-		ReadHeaderTimeout: getDurationEnv("APP_READ_HEADER_TIMEOUT", 5*time.Second),
-		ReadTimeout:       getDurationEnv("APP_READ_TIMEOUT", 15*time.Second),
-		WriteTimeout:      getDurationEnv("APP_WRITE_TIMEOUT", 15*time.Second),
-		ShutdownTimeout:   getDurationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
-		MaxAttempts:       getIntEnv("APP_MAX_ATTEMPTS", 3),
-		APIKeyHeader:      getEnv("API_KEY_HEADER", "X-API-Key"),
-		AdminAPIKey:       getEnv("ADMIN_API_KEY", "change-me-admin"),
-		OperatorAPIKey:    getEnv("OPERATOR_API_KEY", "change-me-operator"),
-		EncryptionKeyB64:  getEnv("ENCRYPTION_KEY_BASE64", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
-		PostgresDSN:       getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
-		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisDB:           getIntEnv("REDIS_DB", 0),
-		SMTPHost:          getEnv("SMTP_HOST", "localhost"),
-		SMTPPort:          getIntEnv("SMTP_PORT", 1025),
-		SMTPUsername:      getEnv("SMTP_USERNAME", ""),
-		SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:          getEnv("SMTP_FROM", "noreply@maild.local"),
+		AppEnv:                    getEnv("APP_ENV", "development"),
+		Addr:                      getEnv("APP_ADDR", ":8080"),
+		ReadHeaderTimeout:         getDurationEnv("APP_READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:               getDurationEnv("APP_READ_TIMEOUT", 15*time.Second),
+		WriteTimeout:              getDurationEnv("APP_WRITE_TIMEOUT", 15*time.Second),
+		ShutdownTimeout:           getDurationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
+		MaxAttempts:               getIntEnv("APP_MAX_ATTEMPTS", 3),
+		APIKeyHeader:              getEnv("API_KEY_HEADER", "X-API-Key"),
+		AdminAPIKey:               getEnv("ADMIN_API_KEY", "change-me-admin"),
+		OperatorAPIKey:            getEnv("OPERATOR_API_KEY", "change-me-operator"),
+		EncryptionKeyB64:          getEnv("ENCRYPTION_KEY_BASE64", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+		RateLimitWorkspacePerHour: getIntEnv("RATE_LIMIT_WORKSPACE_PER_HOUR", 400),
+		RateLimitDomainPerHour:    getIntEnv("RATE_LIMIT_DOMAIN_PER_HOUR", 200),
+		BlockedRecipientDomains:   parseDomainSet(getEnv("BLOCKED_RECIPIENT_DOMAINS", "mailinator.com,tempmail.com")),
+		PostgresDSN:               getEnv("POSTGRES_DSN", "postgres://maild:maild@localhost:5432/maild?sslmode=disable"),
+		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisDB:                   getIntEnv("REDIS_DB", 0),
+		SMTPHost:                  getEnv("SMTP_HOST", "localhost"),
+		SMTPPort:                  getIntEnv("SMTP_PORT", 1025),
+		SMTPUsername:              getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:                  getEnv("SMTP_FROM", "noreply@maild.local"),
 	}
 }
 
@@ -70,6 +76,12 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.EncryptionKeyB64) == "" {
 		return ErrInvalidConfig("ENCRYPTION_KEY_BASE64 must not be empty")
+	}
+	if c.RateLimitWorkspacePerHour < 1 {
+		return ErrInvalidConfig("RATE_LIMIT_WORKSPACE_PER_HOUR must be >= 1")
+	}
+	if c.RateLimitDomainPerHour < 1 {
+		return ErrInvalidConfig("RATE_LIMIT_DOMAIN_PER_HOUR must be >= 1")
 	}
 	return nil
 }
@@ -109,4 +121,16 @@ func getIntEnv(key string, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func parseDomainSet(raw string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, p := range strings.Split(raw, ",") {
+		d := strings.ToLower(strings.TrimSpace(p))
+		if d == "" {
+			continue
+		}
+		out[d] = struct{}{}
+	}
+	return out
 }

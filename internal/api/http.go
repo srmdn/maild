@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -76,6 +77,18 @@ func (h *Handler) createMessage(w http.ResponseWriter, r *http.Request) {
 
 	m, err := h.messages.QueueMessage(r.Context(), req.WorkspaceID, req.FromEmail, req.ToEmail, req.Subject, req.BodyText)
 	if err != nil {
+		if errors.Is(err, service.ErrBadRequest) {
+			writeError(w, http.StatusBadRequest, "invalid recipient email")
+			return
+		}
+		if errors.Is(err, service.ErrBlockedRecipientDomain) {
+			writeError(w, http.StatusBadRequest, "recipient domain is blocked")
+			return
+		}
+		if errors.Is(err, service.ErrRateLimited) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
 	}

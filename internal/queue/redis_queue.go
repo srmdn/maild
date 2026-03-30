@@ -28,6 +28,10 @@ func (q *RedisQueue) Close() error {
 	return q.client.Close()
 }
 
+func (q *RedisQueue) Client() *redis.Client {
+	return q.client
+}
+
 func (q *RedisQueue) Enqueue(ctx context.Context, id int64) error {
 	return q.client.RPush(ctx, q.key, id).Err()
 }
