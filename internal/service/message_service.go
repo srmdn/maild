@@ -8,6 +8,7 @@ import (
 
 	"github.com/srmdn/maild/internal/crypto"
 	"github.com/srmdn/maild/internal/domain"
+	"github.com/srmdn/maild/internal/sanitize"
 	"github.com/srmdn/maild/internal/smtpclient"
 )
 
@@ -120,7 +121,8 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 		return s.store.SetMessageStatus(ctx, m.ID, "sent")
 	}
 
-	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, smtpclient.ProviderName(creds), err.Error(), false); insertErr != nil {
+	safeErr := sanitize.SMTPError(err.Error())
+	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, smtpclient.ProviderName(creds), safeErr, false); insertErr != nil {
 		return insertErr
 	}
 

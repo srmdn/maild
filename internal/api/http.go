@@ -7,6 +7,7 @@ import (
 
 	"github.com/srmdn/maild/internal/auth"
 	"github.com/srmdn/maild/internal/domain"
+	"github.com/srmdn/maild/internal/sanitize"
 	"github.com/srmdn/maild/internal/service"
 )
 
@@ -75,7 +76,7 @@ func (h *Handler) createMessage(w http.ResponseWriter, r *http.Request) {
 
 	m, err := h.messages.QueueMessage(r.Context(), req.WorkspaceID, req.FromEmail, req.ToEmail, req.Subject, req.BodyText)
 	if err != nil {
-		http.Error(w, "failed to queue message", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
 	}
 
@@ -111,7 +112,7 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.messages.AddSuppression(r.Context(), req.WorkspaceID, req.Email, req.Reason); err != nil {
-		http.Error(w, "failed to add suppression", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
 	}
 
@@ -167,7 +168,7 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		FromEmail:   req.FromEmail,
 	})
 	if err != nil {
-		http.Error(w, "failed to save smtp account", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
 	}
 
@@ -187,4 +188,10 @@ func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
