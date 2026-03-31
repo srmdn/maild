@@ -41,6 +41,9 @@ type MessageStore interface {
 	ExportMessageLogsCSV(ctx context.Context, workspaceID int64, limit int) (string, error)
 	InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (domain.WebhookEvent, error)
 	ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error)
+	ListWebhookDeadLetters(ctx context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error)
+	ListWebhookDeadLettersByID(ctx context.Context, workspaceID int64, ids []int64) ([]domain.WebhookEvent, error)
+	UpdateWebhookEventReplayResult(ctx context.Context, id int64, status string, attemptCount int, lastError string) error
 }
 
 type MessageQueue interface {
@@ -432,34 +435,17 @@ func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID in
 		}
 	}
 
-	var lastErr error
-	for attempt := 1; attempt <= s.webhookApplyMaxAttempts; attempt++ {
-		var err error
-		switch eventType {
-		case "bounce", "complaint":
-			err = s.store.AddSuppression(ctx, workspaceID, email, reason)
-		case "unsubscribe":
-			err = s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
-		default:
-			err = fmt.Errorf("unsupported webhook event type: %s", eventType)
-		}
-
-		if err == nil {
-			return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
-				WorkspaceID:  workspaceID,
-				EventType:    eventType,
-				Email:        email,
-				Reason:       reason,
-				Status:       "applied",
-				AttemptCount: attempt,
-				RawPayload:   rawPayload,
-			})
-		}
-
-		lastErr = err
-		if attempt < s.webhookApplyMaxAttempts {
-			time.Sleep(webhookBackoffDuration(attempt))
-		}
+	attempts, lastErr := s.applyWebhookEventWithRetry(ctx, workspaceID, eventType, email, reason)
+	if lastErr == nil {
+		return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+			WorkspaceID:  workspaceID,
+			EventType:    eventType,
+			Email:        email,
+			Reason:       reason,
+			Status:       "applied",
+			AttemptCount: attempts,
+			RawPayload:   rawPayload,
+		})
 	}
 
 	return s.store.InsertWebhookEvent(ctx, domain.WebhookEvent{
@@ -468,7 +454,7 @@ func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID in
 		Email:        email,
 		Reason:       reason,
 		Status:       "dead_letter",
-		AttemptCount: s.webhookApplyMaxAttempts,
+		AttemptCount: attempts,
 		LastError:    lastErr.Error(),
 		RawPayload:   rawPayload,
 	})
@@ -499,6 +485,116 @@ func (s *MessageService) RecordWebhookDeadLetter(ctx context.Context, workspaceI
 
 func (s *MessageService) WebhookLogs(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error) {
 	return s.store.ListWebhookEvents(ctx, workspaceID, limit, strings.TrimSpace(strings.ToLower(status)))
+}
+
+func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspaceID int64, eventIDs []int64, limit int) (domain.WebhookReplayResult, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	replayIDs := normalizePositiveIDs(eventIDs)
+
+	var (
+		events []domain.WebhookEvent
+		err    error
+		source = "latest"
+	)
+	if len(replayIDs) > 0 {
+		source = "ids"
+		events, err = s.store.ListWebhookDeadLettersByID(ctx, workspaceID, replayIDs)
+	} else {
+		if limit < 1 {
+			limit = 20
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		events, err = s.store.ListWebhookDeadLetters(ctx, workspaceID, limit)
+	}
+	if err != nil {
+		return domain.WebhookReplayResult{}, err
+	}
+
+	out := domain.WebhookReplayResult{
+		WorkspaceID:  workspaceID,
+		Requested:    len(events),
+		ReplaySource: source,
+		Outcomes:     make([]domain.WebhookReplayOutcome, 0, len(events)),
+	}
+
+	for _, event := range events {
+		outcome := domain.WebhookReplayOutcome{
+			EventID:      event.ID,
+			Status:       "failed",
+			AttemptCount: event.AttemptCount,
+		}
+
+		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+		email := strings.TrimSpace(strings.ToLower(event.Email))
+		reason := strings.TrimSpace(event.Reason)
+		if email == "" {
+			nextAttempts := event.AttemptCount + 1
+			err := s.store.UpdateWebhookEventReplayResult(ctx, event.ID, "dead_letter", nextAttempts, "replay failed: missing email")
+			if err != nil {
+				return domain.WebhookReplayResult{}, err
+			}
+			out.Failed++
+			outcome.AttemptCount = nextAttempts
+			outcome.Error = "replay failed: missing email"
+			out.Outcomes = append(out.Outcomes, outcome)
+			continue
+		}
+
+		attempts, replayErr := s.applyWebhookEventWithRetry(ctx, event.WorkspaceID, eventType, email, reason)
+		nextAttempts := event.AttemptCount + attempts
+		if replayErr != nil {
+			lastError := "replay failed: " + replayErr.Error()
+			err := s.store.UpdateWebhookEventReplayResult(ctx, event.ID, "dead_letter", nextAttempts, lastError)
+			if err != nil {
+				return domain.WebhookReplayResult{}, err
+			}
+			out.Failed++
+			outcome.AttemptCount = nextAttempts
+			outcome.Error = lastError
+			out.Outcomes = append(out.Outcomes, outcome)
+			continue
+		}
+
+		if err := s.store.UpdateWebhookEventReplayResult(ctx, event.ID, "replayed", nextAttempts, ""); err != nil {
+			return domain.WebhookReplayResult{}, err
+		}
+		out.Replayed++
+		outcome.Status = "replayed"
+		outcome.AttemptCount = nextAttempts
+		out.Outcomes = append(out.Outcomes, outcome)
+	}
+
+	return out, nil
+}
+
+func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspaceID int64, eventType, email, reason string) (int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= s.webhookApplyMaxAttempts; attempt++ {
+		var err error
+		switch eventType {
+		case "bounce", "complaint":
+			err = s.store.AddSuppression(ctx, workspaceID, email, reason)
+		case "unsubscribe":
+			err = s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
+		default:
+			err = fmt.Errorf("unsupported webhook event type: %s", eventType)
+		}
+
+		if err == nil {
+			return attempt, nil
+		}
+
+		lastErr = err
+		if attempt < s.webhookApplyMaxAttempts {
+			time.Sleep(webhookBackoffDuration(attempt))
+		}
+	}
+
+	return s.webhookApplyMaxAttempts, lastErr
 }
 
 var ErrBadRequest = errors.New("bad request")
@@ -533,6 +629,25 @@ func webhookBackoffDuration(attemptNo int) time.Duration {
 		seconds = 8
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func normalizePositiveIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func RateLimitReason(err error) string {

@@ -647,3 +647,90 @@ func (s *Store) ListWebhookEvents(ctx context.Context, workspaceID int64, limit 
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) ListWebhookDeadLetters(ctx context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error) {
+	return s.ListWebhookEvents(ctx, workspaceID, limit, "dead_letter")
+}
+
+func (s *Store) ListWebhookDeadLettersByID(ctx context.Context, workspaceID int64, ids []int64) ([]domain.WebhookEvent, error) {
+	if len(ids) == 0 {
+		return []domain.WebhookEvent{}, nil
+	}
+
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, workspaceID)
+	placeholders := make([]string, 0, len(ids))
+	argNo := 2
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		args = append(args, id)
+		placeholders = append(placeholders, "$"+strconv.Itoa(argNo))
+		argNo++
+	}
+	if len(placeholders) == 0 {
+		return []domain.WebhookEvent{}, nil
+	}
+
+	query := `SELECT id, workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload, created_at
+		 FROM webhook_events
+		 WHERE workspace_id = $1
+		   AND status = 'dead_letter'
+		   AND id IN (` + strings.Join(placeholders, ",") + `)
+		 ORDER BY created_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.WebhookEvent
+	for rows.Next() {
+		var e domain.WebhookEvent
+		var raw sql.NullString
+		var email sql.NullString
+		var reason sql.NullString
+		var lastError sql.NullString
+		if err := rows.Scan(
+			&e.ID,
+			&e.WorkspaceID,
+			&e.EventType,
+			&email,
+			&reason,
+			&e.Status,
+			&e.AttemptCount,
+			&lastError,
+			&raw,
+			&e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if email.Valid {
+			e.Email = email.String
+		}
+		if reason.Valid {
+			e.Reason = reason.String
+		}
+		if lastError.Valid {
+			e.LastError = lastError.String
+		}
+		if raw.Valid {
+			e.RawPayload = raw.String
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateWebhookEventReplayResult(ctx context.Context, id int64, status string, attemptCount int, lastError string) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`UPDATE webhook_events
+		 SET status = $2, attempt_count = $3, last_error = $4
+		 WHERE id = $1`,
+		id, status, attemptCount, lastError,
+	)
+	return err
+}

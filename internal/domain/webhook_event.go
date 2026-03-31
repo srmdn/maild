@@ -14,3 +14,19 @@ type WebhookEvent struct {
 	RawPayload   string    `json:"raw_payload,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+type WebhookReplayOutcome struct {
+	EventID      int64  `json:"event_id"`
+	Status       string `json:"status"`
+	AttemptCount int    `json:"attempt_count"`
+	Error        string `json:"error,omitempty"`
+}
+
+type WebhookReplayResult struct {
+	WorkspaceID  int64                  `json:"workspace_id"`
+	Requested    int                    `json:"requested"`
+	Replayed     int                    `json:"replayed"`
+	Failed       int                    `json:"failed"`
+	ReplaySource string                 `json:"replay_source"`
+	Outcomes     []WebhookReplayOutcome `json:"outcomes"`
+}

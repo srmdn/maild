@@ -58,6 +58,7 @@ http://localhost:8025
 - `POST /v1/messages`
 - `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
 - `GET /v1/webhooks/logs`
+- `POST /v1/webhooks/replay`
 - `GET /v1/smtp-accounts/list`
 - `POST /v1/smtp-accounts/activate`
 - `GET/POST /v1/workspaces/policy`

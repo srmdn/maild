@@ -104,6 +104,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.webhookLogs)),
 	)
 	mux.HandleFunc(
+		"/v1/webhooks/replay",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.replayWebhookDeadLetters)),
+	)
+	mux.HandleFunc(
 		"/v1/workspaces/policy",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicy)),
 	)
@@ -133,6 +137,12 @@ type webhookEventRequest struct {
 	Type        string `json:"type"`
 	Email       string `json:"email"`
 	Reason      string `json:"reason"`
+}
+
+type replayWebhookDeadLettersRequest struct {
+	WorkspaceID int64   `json:"workspace_id"`
+	EventIDs    []int64 `json:"event_ids"`
+	Limit       int     `json:"limit"`
 }
 
 func (h *Handler) receiveWebhookEvent(w http.ResponseWriter, r *http.Request) {
@@ -727,6 +737,39 @@ func (h *Handler) webhookLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) replayWebhookDeadLetters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req replayWebhookDeadLettersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+
+	result, err := h.messages.ReplayWebhookDeadLetters(r.Context(), req.WorkspaceID, req.EventIDs, req.Limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("webhook_dead_letter_replay_failed", "workspace_id", req.WorkspaceID, "reason", err.Error())
+		return
+	}
+
+	h.logger.Info(
+		"webhook_dead_letter_replayed",
+		"workspace_id", result.WorkspaceID,
+		"requested", result.Requested,
+		"replayed", result.Replayed,
+		"failed", result.Failed,
+		"source", result.ReplaySource,
+	)
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) workspacePolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -925,7 +968,7 @@ func (h *Handler) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(csvData))
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload domain.Message) {
+func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
