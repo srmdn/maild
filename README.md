@@ -13,7 +13,10 @@ It is not a full mailbox server and does not include IMAP/POP webmail.
 
 ## Project Status
 
-Bootstrap initialized. Core app scaffold exists, but message queue/worker delivery is not implemented yet.
+Actively used v0.x control plane:
+- API -> queue -> worker delivery is implemented
+- operator console workflows are available at `/ui/logs` and `/ui/policy`
+- current focus is pilot onboarding, paid conversion, and GA scope freeze
 
 ## Stack
 
