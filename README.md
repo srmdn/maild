@@ -258,6 +258,7 @@ http://localhost:8080/ui/logs?workspace_id=1
 - domain readiness check (SPF/DKIM/DMARC) via existing API
 - suppression/unsubscribe quick actions (requires admin API key for those writes)
 - webhook dead-letter view and replay controls
+- saved filter presets for `failed`, `suppressed`, and `dead_letter` views
 
 Analytics/export and billing metering:
 

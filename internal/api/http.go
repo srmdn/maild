@@ -959,18 +959,25 @@ h1,h2{margin-top:1.6rem}
 .row{display:flex;gap:1rem;flex-wrap:wrap}
 .panel{flex:1 1 320px;border:1px solid #e9e9e9;padding:1rem;border-radius:.5rem;background:#fff}
 .stat{display:inline-block;margin-right:.8rem}
+.hint{color:#555;font-size:.92rem}
 </style>
 </head><body>
 <h1>Operator Console</h1>
 <p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
 <label>API Key</label><br />
 <input id="apiKey" type="text" placeholder="change-me-operator" size="42" />
+<p id="activeFilter" class="hint"></p>
 <div class="row">
   <section class="panel">
     <h2>Queue State</h2>
     <label>Limit</label>
     <input id="limit" type="number" value="50" min="1" max="500" />
     <button id="refresh">Refresh Logs</button>
+    <div>
+      <button id="filterFailed">Filter Failed</button>
+      <button id="filterSuppressed">Filter Suppressed</button>
+      <button id="clearMessageFilter">Clear Message Filter</button>
+    </div>
     <p id="queueSummary"></p>
     <label>Selected Message ID</label>
     <input id="selectedMessageId" type="number" placeholder="click a row" />
@@ -1003,6 +1010,8 @@ h1,h2{margin-top:1.6rem}
     <label>Limit</label>
     <input id="webhookLimit" type="number" value="20" min="1" max="200" />
     <button id="loadDeadLetters">Load Dead Letters</button>
+    <button id="filterDeadLetter">Filter Dead Letter</button>
+    <button id="clearWebhookFilter">Clear Webhook Filter</button>
     <label>Replay Event ID</label><br />
     <input id="webhookEventId" type="number" placeholder="optional single event id" />
     <button id="replayDeadLetters">Replay</button>
@@ -1035,10 +1044,41 @@ const selectedIdEl = document.getElementById('selectedMessageId');
 const queueSummaryEl = document.getElementById('queueSummary');
 const domainResultEl = document.getElementById('domainResult');
 const webhookResultEl = document.getElementById('webhookResult');
+const activeFilterEl = document.getElementById('activeFilter');
+const savedFilterKey = 'maild_operator_saved_filter';
+let savedFilter = { message_status: '', webhook_status: '' };
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
   return key ? { 'X-API-Key': key } : {};
+}
+
+function loadSavedFilter() {
+  try {
+    const raw = localStorage.getItem(savedFilterKey);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      savedFilter = {
+        message_status: String(parsed.message_status || ''),
+        webhook_status: String(parsed.webhook_status || ''),
+      };
+    }
+  } catch (_) {}
+}
+
+function persistSavedFilter() {
+  try {
+    localStorage.setItem(savedFilterKey, JSON.stringify(savedFilter));
+  } catch (_) {}
+  updateActiveFilterLabel();
+}
+
+function updateActiveFilterLabel() {
+  const parts = [];
+  if (savedFilter.message_status) parts.push('messages=' + savedFilter.message_status);
+  if (savedFilter.webhook_status) parts.push('webhooks=' + savedFilter.webhook_status);
+  activeFilterEl.textContent = parts.length === 0 ? 'Saved filter: none' : 'Saved filter: ' + parts.join(', ');
 }
 
 function summarizeQueue(messages) {
@@ -1071,8 +1111,12 @@ async function loadLogs() {
   }
   const data = await res.json();
   summarizeQueue(data.messages || []);
+  let messages = data.messages || [];
+  if (savedFilter.message_status) {
+    messages = messages.filter((m) => m.status === savedFilter.message_status);
+  }
   rowsEl.innerHTML = '';
-  for (const m of data.messages || []) {
+  for (const m of messages) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>' + m.id + '</td>' +
       '<td>' + m.to_email + '</td>' +
@@ -1083,7 +1127,7 @@ async function loadLogs() {
     tr.addEventListener('click', () => loadTimeline(m.id));
     rowsEl.appendChild(tr);
   }
-  if ((data.messages || []).length === 0) {
+  if (messages.length === 0) {
     timelineEl.textContent = 'No messages found for this workspace.';
   }
 }
@@ -1126,6 +1170,16 @@ async function postJSON(path, payload) {
     headers: { 'Content-Type': 'application/json', ...readHeaders() },
     body: JSON.stringify(payload),
   });
+}
+
+async function loadWebhookLogs() {
+  const limit = Number(document.getElementById('webhookLimit').value || 20);
+  const status = savedFilter.webhook_status ? '&status=' + encodeURIComponent(savedFilter.webhook_status) : '';
+  const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&limit=' + limit + status, {
+    headers: readHeaders(),
+  });
+  statusEl.textContent = 'Webhook logs HTTP ' + res.status;
+  webhookResultEl.textContent = await res.text();
 }
 
 document.getElementById('addSuppression').addEventListener('click', async () => {
@@ -1176,14 +1230,7 @@ document.getElementById('checkDomain').addEventListener('click', async () => {
   domainResultEl.textContent = await res.text();
 });
 
-document.getElementById('loadDeadLetters').addEventListener('click', async () => {
-  const limit = Number(document.getElementById('webhookLimit').value || 20);
-  const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&status=dead_letter&limit=' + limit, {
-    headers: readHeaders(),
-  });
-  statusEl.textContent = 'Webhook logs HTTP ' + res.status;
-  webhookResultEl.textContent = await res.text();
-});
+document.getElementById('loadDeadLetters').addEventListener('click', loadWebhookLogs);
 
 document.getElementById('replayDeadLetters').addEventListener('click', async () => {
   const eventID = Number(document.getElementById('webhookEventId').value || 0);
@@ -1199,6 +1246,39 @@ document.getElementById('replayDeadLetters').addEventListener('click', async () 
   statusEl.textContent = 'Webhook replay HTTP ' + res.status;
   webhookResultEl.textContent = await res.text();
 });
+
+document.getElementById('filterFailed').addEventListener('click', () => {
+  savedFilter.message_status = 'failed';
+  persistSavedFilter();
+  loadLogs();
+});
+
+document.getElementById('filterSuppressed').addEventListener('click', () => {
+  savedFilter.message_status = 'suppressed';
+  persistSavedFilter();
+  loadLogs();
+});
+
+document.getElementById('clearMessageFilter').addEventListener('click', () => {
+  savedFilter.message_status = '';
+  persistSavedFilter();
+  loadLogs();
+});
+
+document.getElementById('filterDeadLetter').addEventListener('click', () => {
+  savedFilter.webhook_status = 'dead_letter';
+  persistSavedFilter();
+  loadWebhookLogs();
+});
+
+document.getElementById('clearWebhookFilter').addEventListener('click', () => {
+  savedFilter.webhook_status = '';
+  persistSavedFilter();
+  loadWebhookLogs();
+});
+
+loadSavedFilter();
+updateActiveFilterLabel();
 </script>
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
