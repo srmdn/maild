@@ -324,12 +324,20 @@ func (s *Store) ListMessageAttempts(ctx context.Context, messageID int64) ([]dom
 	return out, rows.Err()
 }
 
-func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error) {
+func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int, from, to time.Time) ([]domain.Message, error) {
 	if limit < 1 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
+	}
+	var fromArg any
+	var toArg any
+	if !from.IsZero() {
+		fromArg = from.UTC()
+	}
+	if !to.IsZero() {
+		toArg = to.UTC()
 	}
 
 	rows, err := s.db.QueryContext(
@@ -337,9 +345,11 @@ func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) 
 		`SELECT id, workspace_id, from_email, to_email, subject, body_text, status, scheduled_at, created_at, updated_at
 		 FROM messages
 		 WHERE workspace_id = $1
+		   AND ($2::timestamptz IS NULL OR created_at >= $2)
+		   AND ($3::timestamptz IS NULL OR created_at < $3)
 		 ORDER BY created_at DESC
-		 LIMIT $2`,
-		workspaceID, limit,
+		 LIMIT $4`,
+		workspaceID, fromArg, toArg, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -587,12 +597,20 @@ func csvEscape(v string) string {
 	return `"` + escaped + `"`
 }
 
-func (s *Store) ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error) {
+func (s *Store) ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string, from, to time.Time) ([]domain.WebhookEvent, error) {
 	if limit < 1 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
+	}
+	var fromArg any
+	var toArg any
+	if !from.IsZero() {
+		fromArg = from.UTC()
+	}
+	if !to.IsZero() {
+		toArg = to.UTC()
 	}
 
 	rows, err := s.db.QueryContext(
@@ -601,9 +619,11 @@ func (s *Store) ListWebhookEvents(ctx context.Context, workspaceID int64, limit 
 		 FROM webhook_events
 		 WHERE workspace_id = $1
 		   AND ($2 = '' OR status = $2)
+		   AND ($3::timestamptz IS NULL OR created_at >= $3)
+		   AND ($4::timestamptz IS NULL OR created_at < $4)
 		 ORDER BY created_at DESC
-		 LIMIT $3`,
-		workspaceID, status, limit,
+		 LIMIT $5`,
+		workspaceID, status, fromArg, toArg, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -649,7 +669,7 @@ func (s *Store) ListWebhookEvents(ctx context.Context, workspaceID int64, limit 
 }
 
 func (s *Store) ListWebhookDeadLetters(ctx context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error) {
-	return s.ListWebhookEvents(ctx, workspaceID, limit, "dead_letter")
+	return s.ListWebhookEvents(ctx, workspaceID, limit, "dead_letter", time.Time{}, time.Time{})
 }
 
 func (s *Store) ListWebhookDeadLettersByID(ctx context.Context, workspaceID int64, ids []int64) ([]domain.WebhookEvent, error) {

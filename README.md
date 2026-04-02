@@ -259,6 +259,7 @@ http://localhost:8080/ui/logs?workspace_id=1
 - suppression/unsubscribe quick actions (requires admin API key for those writes)
 - webhook dead-letter view and replay controls
 - saved filter presets for `failed`, `suppressed`, and `dead_letter` views
+- time-range filtering (`from`/`to`) for message logs and webhook logs
 
 Analytics/export and billing metering:
 

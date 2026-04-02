@@ -193,7 +193,7 @@ func (s *replayStore) InsertAttempt(context.Context, int64, int, string, string,
 func (s *replayStore) ListMessageAttempts(context.Context, int64) ([]domain.MessageAttempt, error) {
 	return nil, nil
 }
-func (s *replayStore) ListMessages(context.Context, int64, int) ([]domain.Message, error) {
+func (s *replayStore) ListMessages(context.Context, int64, int, time.Time, time.Time) ([]domain.Message, error) {
 	return nil, nil
 }
 func (s *replayStore) CountMessagesSince(context.Context, int64, string, time.Time) (int64, error) {
@@ -215,7 +215,7 @@ func (s *replayStore) ExportMessageLogsCSV(context.Context, int64, int) (string,
 func (s *replayStore) InsertWebhookEvent(context.Context, domain.WebhookEvent) (domain.WebhookEvent, error) {
 	return domain.WebhookEvent{}, nil
 }
-func (s *replayStore) ListWebhookEvents(context.Context, int64, int, string) ([]domain.WebhookEvent, error) {
+func (s *replayStore) ListWebhookEvents(context.Context, int64, int, string, time.Time, time.Time) ([]domain.WebhookEvent, error) {
 	return nil, nil
 }
 func (s *replayStore) ListWebhookDeadLetters(_ context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error) {

@@ -159,7 +159,7 @@ func (s *retryStore) InsertAttempt(context.Context, int64, int, string, string, 
 func (s *retryStore) ListMessageAttempts(context.Context, int64) ([]domain.MessageAttempt, error) {
 	return nil, nil
 }
-func (s *retryStore) ListMessages(context.Context, int64, int) ([]domain.Message, error) {
+func (s *retryStore) ListMessages(context.Context, int64, int, time.Time, time.Time) ([]domain.Message, error) {
 	return s.listMessages, nil
 }
 func (s *retryStore) CountMessagesSince(context.Context, int64, string, time.Time) (int64, error) {
@@ -179,7 +179,7 @@ func (s *retryStore) ExportMessageLogsCSV(context.Context, int64, int) (string, 
 func (s *retryStore) InsertWebhookEvent(context.Context, domain.WebhookEvent) (domain.WebhookEvent, error) {
 	return domain.WebhookEvent{}, nil
 }
-func (s *retryStore) ListWebhookEvents(context.Context, int64, int, string) ([]domain.WebhookEvent, error) {
+func (s *retryStore) ListWebhookEvents(context.Context, int64, int, string, time.Time, time.Time) ([]domain.WebhookEvent, error) {
 	return nil, nil
 }
 func (s *retryStore) ListWebhookDeadLetters(context.Context, int64, int) ([]domain.WebhookEvent, error) {

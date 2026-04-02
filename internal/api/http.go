@@ -697,7 +697,8 @@ func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	messages, err := h.messages.MessageLogs(r.Context(), workspaceID, limit)
+	from, to := parseFromToOptional(r)
+	messages, err := h.messages.MessageLogs(r.Context(), workspaceID, limit, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
@@ -707,6 +708,8 @@ func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"workspace_id": workspaceID,
+		"from":         formatRFC3339OrEmpty(from),
+		"to":           formatRFC3339OrEmpty(to),
 		"count":        len(messages),
 		"messages":     messages,
 	})
@@ -734,8 +737,8 @@ func (h *Handler) webhookLogs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
-
-	events, err := h.messages.WebhookLogs(r.Context(), workspaceID, limit, status)
+	from, to := parseFromToOptional(r)
+	events, err := h.messages.WebhookLogs(r.Context(), workspaceID, limit, status, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 		return
@@ -745,6 +748,8 @@ func (h *Handler) webhookLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"workspace_id": workspaceID,
+		"from":         formatRFC3339OrEmpty(from),
+		"to":           formatRFC3339OrEmpty(to),
 		"status":       status,
 		"count":        len(events),
 		"events":       events,
@@ -967,6 +972,12 @@ h1,h2{margin-top:1.6rem}
 <label>API Key</label><br />
 <input id="apiKey" type="text" placeholder="change-me-operator" size="42" />
 <p id="activeFilter" class="hint"></p>
+<label>From (UTC)</label>
+<input id="rangeFrom" type="datetime-local" />
+<label>To (UTC)</label>
+<input id="rangeTo" type="datetime-local" />
+<button id="applyRange">Apply Range</button>
+<button id="clearRange">Clear Range</button>
 <div class="row">
   <section class="panel">
     <h2>Queue State</h2>
@@ -1046,7 +1057,7 @@ const domainResultEl = document.getElementById('domainResult');
 const webhookResultEl = document.getElementById('webhookResult');
 const activeFilterEl = document.getElementById('activeFilter');
 const savedFilterKey = 'maild_operator_saved_filter';
-let savedFilter = { message_status: '', webhook_status: '' };
+let savedFilter = { message_status: '', webhook_status: '', from: '', to: '' };
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
@@ -1062,6 +1073,8 @@ function loadSavedFilter() {
       savedFilter = {
         message_status: String(parsed.message_status || ''),
         webhook_status: String(parsed.webhook_status || ''),
+        from: String(parsed.from || ''),
+        to: String(parsed.to || ''),
       };
     }
   } catch (_) {}
@@ -1078,7 +1091,28 @@ function updateActiveFilterLabel() {
   const parts = [];
   if (savedFilter.message_status) parts.push('messages=' + savedFilter.message_status);
   if (savedFilter.webhook_status) parts.push('webhooks=' + savedFilter.webhook_status);
+  if (savedFilter.from) parts.push('from=' + savedFilter.from);
+  if (savedFilter.to) parts.push('to=' + savedFilter.to);
   activeFilterEl.textContent = parts.length === 0 ? 'Saved filter: none' : 'Saved filter: ' + parts.join(', ');
+}
+
+function localDateTimeValueFromRFC3339(raw) {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return y + '-' + m + '-' + day + 'T' + h + ':' + min;
+}
+
+function rfc3339FromLocalDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString();
 }
 
 function summarizeQueue(messages) {
@@ -1100,7 +1134,10 @@ function summarizeQueue(messages) {
 
 async function loadLogs() {
   const limit = Number(document.getElementById('limit').value || 25);
-  const res = await fetch('/v1/messages/logs?workspace_id=' + workspaceId + '&limit=' + limit, {
+  let url = '/v1/messages/logs?workspace_id=' + workspaceId + '&limit=' + limit;
+  if (savedFilter.from) url += '&from=' + encodeURIComponent(savedFilter.from);
+  if (savedFilter.to) url += '&to=' + encodeURIComponent(savedFilter.to);
+  const res = await fetch(url, {
     headers: readHeaders(),
   });
   statusEl.textContent = 'Logs HTTP ' + res.status;
@@ -1174,8 +1211,11 @@ async function postJSON(path, payload) {
 
 async function loadWebhookLogs() {
   const limit = Number(document.getElementById('webhookLimit').value || 20);
+  let range = '';
+  if (savedFilter.from) range += '&from=' + encodeURIComponent(savedFilter.from);
+  if (savedFilter.to) range += '&to=' + encodeURIComponent(savedFilter.to);
   const status = savedFilter.webhook_status ? '&status=' + encodeURIComponent(savedFilter.webhook_status) : '';
-  const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&limit=' + limit + status, {
+  const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&limit=' + limit + status + range, {
     headers: readHeaders(),
   });
   statusEl.textContent = 'Webhook logs HTTP ' + res.status;
@@ -1277,7 +1317,29 @@ document.getElementById('clearWebhookFilter').addEventListener('click', () => {
   loadWebhookLogs();
 });
 
+document.getElementById('applyRange').addEventListener('click', () => {
+  const fromInput = document.getElementById('rangeFrom').value;
+  const toInput = document.getElementById('rangeTo').value;
+  savedFilter.from = rfc3339FromLocalDateTime(fromInput);
+  savedFilter.to = rfc3339FromLocalDateTime(toInput);
+  persistSavedFilter();
+  loadLogs();
+  loadWebhookLogs();
+});
+
+document.getElementById('clearRange').addEventListener('click', () => {
+  savedFilter.from = '';
+  savedFilter.to = '';
+  document.getElementById('rangeFrom').value = '';
+  document.getElementById('rangeTo').value = '';
+  persistSavedFilter();
+  loadLogs();
+  loadWebhookLogs();
+});
+
 loadSavedFilter();
+document.getElementById('rangeFrom').value = localDateTimeValueFromRFC3339(savedFilter.from);
+document.getElementById('rangeTo').value = localDateTimeValueFromRFC3339(savedFilter.to);
 updateActiveFilterLabel();
 </script>
 </body></html>`
@@ -1413,4 +1475,30 @@ func parseFromTo(r *http.Request) (time.Time, time.Time) {
 		to = from.Add(24 * time.Hour)
 	}
 	return from, to
+}
+
+func parseFromToOptional(r *http.Request) (time.Time, time.Time) {
+	var from time.Time
+	var to time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("from")); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			from = t.UTC()
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("to")); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			to = t.UTC()
+		}
+	}
+	if !from.IsZero() && !to.IsZero() && !to.After(from) {
+		to = from.Add(24 * time.Hour)
+	}
+	return from, to
+}
+
+func formatRFC3339OrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

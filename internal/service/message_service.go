@@ -32,7 +32,7 @@ type MessageStore interface {
 	NextAttemptNo(ctx context.Context, messageID int64) (int, error)
 	InsertAttempt(ctx context.Context, messageID int64, attemptNo int, provider, response string, success bool) error
 	ListMessageAttempts(ctx context.Context, messageID int64) ([]domain.MessageAttempt, error)
-	ListMessages(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error)
+	ListMessages(ctx context.Context, workspaceID int64, limit int, from, to time.Time) ([]domain.Message, error)
 	CountMessagesSince(ctx context.Context, workspaceID int64, recipientDomain string, since time.Time) (int64, error)
 	UpsertWorkspacePolicy(ctx context.Context, p domain.WorkspacePolicy) error
 	GetWorkspacePolicy(ctx context.Context, workspaceID int64) (domain.WorkspacePolicy, bool, error)
@@ -40,7 +40,7 @@ type MessageStore interface {
 	MeteringSummary(ctx context.Context, workspaceID int64, from, to time.Time) ([]domain.MeteringSummaryItem, error)
 	ExportMessageLogsCSV(ctx context.Context, workspaceID int64, limit int) (string, error)
 	InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (domain.WebhookEvent, error)
-	ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error)
+	ListWebhookEvents(ctx context.Context, workspaceID int64, limit int, status string, from, to time.Time) ([]domain.WebhookEvent, error)
 	ListWebhookDeadLetters(ctx context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error)
 	ListWebhookDeadLettersByID(ctx context.Context, workspaceID int64, ids []int64) ([]domain.WebhookEvent, error)
 	UpdateWebhookEventReplayResult(ctx context.Context, id int64, status string, attemptCount int, lastError string) error
@@ -415,8 +415,8 @@ func (s *MessageService) MessageTimeline(ctx context.Context, messageID int64) (
 	return m, attempts, nil
 }
 
-func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, limit int) ([]domain.Message, error) {
-	return s.store.ListMessages(ctx, workspaceID, limit)
+func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, limit int, from, to time.Time) ([]domain.Message, error) {
+	return s.store.ListMessages(ctx, workspaceID, limit, from, to)
 }
 
 func (s *MessageService) RetryMessages(ctx context.Context, workspaceID int64, messageIDs []int64, limit int) (domain.MessageRetryResult, error) {
@@ -457,7 +457,7 @@ func (s *MessageService) RetryMessages(ctx context.Context, workspaceID int64, m
 	}
 	out.ReplaySource = "latest_failed"
 
-	messages, err := s.store.ListMessages(ctx, workspaceID, limit)
+	messages, err := s.store.ListMessages(ctx, workspaceID, limit, time.Time{}, time.Time{})
 	if err != nil {
 		return domain.MessageRetryResult{}, err
 	}
@@ -611,8 +611,8 @@ func (s *MessageService) RecordWebhookDeadLetter(ctx context.Context, workspaceI
 	})
 }
 
-func (s *MessageService) WebhookLogs(ctx context.Context, workspaceID int64, limit int, status string) ([]domain.WebhookEvent, error) {
-	return s.store.ListWebhookEvents(ctx, workspaceID, limit, strings.TrimSpace(strings.ToLower(status)))
+func (s *MessageService) WebhookLogs(ctx context.Context, workspaceID int64, limit int, status string, from, to time.Time) ([]domain.WebhookEvent, error) {
+	return s.store.ListWebhookEvents(ctx, workspaceID, limit, strings.TrimSpace(strings.ToLower(status)), from, to)
 }
 
 func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspaceID int64, eventIDs []int64, limit int) (domain.WebhookReplayResult, error) {
