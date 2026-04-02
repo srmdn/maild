@@ -419,6 +419,134 @@ func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, lim
 	return s.store.ListMessages(ctx, workspaceID, limit)
 }
 
+func (s *MessageService) RetryMessages(ctx context.Context, workspaceID int64, messageIDs []int64, limit int) (domain.MessageRetryResult, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	retryIDs := normalizePositiveIDs(messageIDs)
+
+	out := domain.MessageRetryResult{
+		WorkspaceID: workspaceID,
+		Outcomes:    make([]domain.MessageRetryOutcome, 0),
+	}
+
+	if len(retryIDs) > 0 {
+		out.ReplaySource = "ids"
+		out.Requested = len(retryIDs)
+		for _, id := range retryIDs {
+			msg, err := s.store.GetMessage(ctx, id)
+			if err != nil {
+				out.Failed++
+				out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+					MessageID: id,
+					Status:    "failed",
+					Error:     "message not found",
+				})
+				continue
+			}
+			s.retryMessage(ctx, workspaceID, msg, &out)
+		}
+		return out, nil
+	}
+
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	out.ReplaySource = "latest_failed"
+
+	messages, err := s.store.ListMessages(ctx, workspaceID, limit)
+	if err != nil {
+		return domain.MessageRetryResult{}, err
+	}
+	for _, msg := range messages {
+		if msg.Status != "failed" {
+			continue
+		}
+		out.Requested++
+		s.retryMessage(ctx, workspaceID, msg, &out)
+	}
+	return out, nil
+}
+
+func (s *MessageService) retryMessage(ctx context.Context, workspaceID int64, msg domain.Message, out *domain.MessageRetryResult) {
+	if msg.WorkspaceID != workspaceID {
+		out.Failed++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "failed",
+			Error:     "workspace mismatch",
+		})
+		return
+	}
+	if msg.Status != "failed" {
+		out.Skipped++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "skipped",
+			Error:     "only failed messages can be retried",
+		})
+		return
+	}
+
+	ok, err := s.store.TransitionMessageStatus(ctx, msg.ID, "failed", "queued")
+	if err != nil {
+		out.Failed++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "failed",
+			Error:     "status transition failed",
+		})
+		return
+	}
+	if !ok {
+		out.Skipped++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "skipped",
+			Error:     "message no longer failed",
+		})
+		return
+	}
+
+	if s.queue == nil {
+		_ = s.store.SetMessageStatus(ctx, msg.ID, "failed")
+		out.Failed++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "failed",
+			Error:     "queue unavailable",
+		})
+		return
+	}
+
+	if err := s.queue.Enqueue(ctx, msg.ID); err != nil {
+		_ = s.store.SetMessageStatus(ctx, msg.ID, "failed")
+		out.Failed++
+		out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+			MessageID: msg.ID,
+			Status:    "failed",
+			Error:     "queue enqueue failed",
+		})
+		return
+	}
+
+	_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
+		WorkspaceID: msg.WorkspaceID,
+		MessageID:   msg.ID,
+		EventType:   "message_retried",
+		Quantity:    1,
+		Metadata:    `{"source":"manual_retry"}`,
+	})
+	out.Retried++
+	out.Outcomes = append(out.Outcomes, domain.MessageRetryOutcome{
+		MessageID: msg.ID,
+		Status:    "retried",
+	})
+}
+
 func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string) (domain.WebhookEvent, error) {
 	if workspaceID == 0 {
 		workspaceID = 1

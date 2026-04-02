@@ -100,6 +100,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
 	)
 	mux.HandleFunc(
+		"/v1/messages/retry",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.retryMessages)),
+	)
+	mux.HandleFunc(
 		"/v1/webhooks/logs",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.webhookLogs)),
 	)
@@ -146,6 +150,12 @@ type webhookEventRequest struct {
 type replayWebhookDeadLettersRequest struct {
 	WorkspaceID int64   `json:"workspace_id"`
 	EventIDs    []int64 `json:"event_ids"`
+	Limit       int     `json:"limit"`
+}
+
+type retryMessagesRequest struct {
+	WorkspaceID int64   `json:"workspace_id"`
+	MessageIDs  []int64 `json:"message_ids"`
 	Limit       int     `json:"limit"`
 }
 
@@ -774,6 +784,40 @@ func (h *Handler) replayWebhookDeadLetters(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) retryMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req retryMessagesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == 0 {
+		req.WorkspaceID = 1
+	}
+
+	result, err := h.messages.RetryMessages(r.Context(), req.WorkspaceID, req.MessageIDs, req.Limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		h.logger.Warn("message_retry_failed", "workspace_id", req.WorkspaceID, "reason", err.Error())
+		return
+	}
+
+	h.logger.Info(
+		"message_retry_completed",
+		"workspace_id", result.WorkspaceID,
+		"requested", result.Requested,
+		"retried", result.Retried,
+		"skipped", result.Skipped,
+		"failed", result.Failed,
+		"source", result.ReplaySource,
+	)
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) workspacePolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -920,6 +964,9 @@ pre{background:#f8f8f8;padding:1rem;overflow:auto}
 <label>Limit</label>
 <input id="limit" type="number" value="25" min="1" max="500" />
 <button id="refresh">Refresh Logs</button>
+<label>Selected Message ID</label>
+<input id="selectedMessageId" type="number" placeholder="click a row" />
+<button id="retrySelected">Retry Selected</button>
 <p id="status"></p>
 <table>
   <thead>
@@ -941,6 +988,7 @@ const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
 const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('rows');
 const timelineEl = document.getElementById('timeline');
+const selectedIdEl = document.getElementById('selectedMessageId');
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
@@ -977,6 +1025,7 @@ async function loadLogs() {
 }
 
 async function loadTimeline(messageId) {
+  selectedIdEl.value = String(messageId);
   const res = await fetch('/v1/messages/timeline?message_id=' + messageId, {
     headers: readHeaders(),
   });
@@ -989,6 +1038,23 @@ async function loadTimeline(messageId) {
 }
 
 document.getElementById('refresh').addEventListener('click', loadLogs);
+document.getElementById('retrySelected').addEventListener('click', async () => {
+  const messageId = Number(selectedIdEl.value || 0);
+  if (!messageId) {
+    statusEl.textContent = 'Select a message row first.';
+    return;
+  }
+  const res = await fetch('/v1/messages/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...readHeaders() },
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      message_ids: [messageId]
+    }),
+  });
+  statusEl.textContent = 'Retry HTTP ' + res.status;
+  timelineEl.textContent = await res.text();
+});
 </script>
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

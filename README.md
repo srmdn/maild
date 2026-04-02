@@ -56,6 +56,7 @@ http://localhost:8025
 - `GET /healthz`
 - `GET /readyz`
 - `POST /v1/messages`
+- `POST /v1/messages/retry`
 - `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
 - `GET /v1/webhooks/logs`
 - `POST /v1/webhooks/replay`
@@ -172,6 +173,15 @@ Operator message timeline view:
 ```sh
 curl -sS "http://localhost:8080/v1/messages/timeline?message_id=1" \
   -H "X-API-Key: change-me-operator"
+```
+
+Operator controlled retry:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/messages/retry \
+  -H "X-API-Key: change-me-operator" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":1,"message_ids":[1]}'
 ```
 
 Provider webhook event ingest (signature required):
