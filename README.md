@@ -67,7 +67,7 @@ http://localhost:8025
 - `GET /v1/analytics/summary`
 - `GET /v1/analytics/export.csv`
 - `GET /v1/billing/metering`
-- `GET /ui/logs` (minimal operator read-only logs/timeline view)
+- `GET /ui/logs` (operator console: logs/timeline, queue-state summary, domain readiness, suppression tools)
 
 Example:
 
@@ -248,6 +248,12 @@ Operator logs UI:
 ```text
 http://localhost:8080/ui/logs?workspace_id=1
 ```
+
+`/ui/logs` capabilities:
+- queue-state snapshot from recent message logs (`queued/sending/sent/failed/suppressed`)
+- timeline drill-down and controlled message retry by message ID
+- domain readiness check (SPF/DKIM/DMARC) via existing API
+- suppression/unsubscribe quick actions (requires admin API key for those writes)
 
 Analytics/export and billing metering:
 

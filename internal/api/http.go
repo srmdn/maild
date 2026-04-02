@@ -947,27 +947,60 @@ func (h *Handler) messageLogsUI(w http.ResponseWriter, r *http.Request) {
 	html := `<!doctype html>
 <html><head><meta charset="utf-8"><title>maild logs</title>
 <style>
-body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:1100px}
+body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:1200px}
 code{background:#f2f2f2;padding:.1rem .3rem}
-input{padding:.5rem;margin:.25rem .25rem .75rem 0}
-button{padding:.6rem 1rem}
+input,textarea{padding:.5rem;margin:.25rem .25rem .75rem 0}
+button{padding:.6rem 1rem;margin-right:.5rem}
 table{width:100%;border-collapse:collapse;margin-top:1rem}
 th,td{border-bottom:1px solid #ddd;padding:.5rem;text-align:left;vertical-align:top}
 tr:hover{background:#fafafa;cursor:pointer}
 pre{background:#f8f8f8;padding:1rem;overflow:auto}
+h1,h2{margin-top:1.6rem}
+.row{display:flex;gap:1rem;flex-wrap:wrap}
+.panel{flex:1 1 320px;border:1px solid #e9e9e9;padding:1rem;border-radius:.5rem;background:#fff}
+.stat{display:inline-block;margin-right:.8rem}
 </style>
 </head><body>
-<h1>Message Logs</h1>
+<h1>Operator Console</h1>
 <p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
 <label>API Key</label><br />
 <input id="apiKey" type="text" placeholder="change-me-operator" size="42" />
-<label>Limit</label>
-<input id="limit" type="number" value="25" min="1" max="500" />
-<button id="refresh">Refresh Logs</button>
-<label>Selected Message ID</label>
-<input id="selectedMessageId" type="number" placeholder="click a row" />
-<button id="retrySelected">Retry Selected</button>
+<div class="row">
+  <section class="panel">
+    <h2>Queue State</h2>
+    <label>Limit</label>
+    <input id="limit" type="number" value="50" min="1" max="500" />
+    <button id="refresh">Refresh Logs</button>
+    <p id="queueSummary"></p>
+    <label>Selected Message ID</label>
+    <input id="selectedMessageId" type="number" placeholder="click a row" />
+    <button id="retrySelected">Retry Selected</button>
+  </section>
+  <section class="panel">
+    <h2>Suppression Tools</h2>
+    <label>Email</label><br />
+    <input id="suppressionEmail" type="email" placeholder="user@example.com" size="34" />
+    <label>Reason</label><br />
+    <input id="suppressionReason" type="text" placeholder="manual" size="34" />
+    <div>
+      <button id="addSuppression">Add Suppression</button>
+      <button id="addUnsubscribe">Add Unsubscribe</button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Domain Health</h2>
+    <label>Domain</label><br />
+    <input id="domainName" type="text" placeholder="maild.click" size="26" />
+    <label>DKIM Selector</label><br />
+    <input id="dkimSelector" type="text" placeholder="default" size="26" />
+    <div>
+      <button id="checkDomain">Run Readiness Check</button>
+    </div>
+    <pre id="domainResult"></pre>
+  </section>
+</div>
 <p id="status"></p>
+<h2>Message Logs</h2>
 <table>
   <thead>
     <tr>
@@ -989,10 +1022,29 @@ const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('rows');
 const timelineEl = document.getElementById('timeline');
 const selectedIdEl = document.getElementById('selectedMessageId');
+const queueSummaryEl = document.getElementById('queueSummary');
+const domainResultEl = document.getElementById('domainResult');
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
   return key ? { 'X-API-Key': key } : {};
+}
+
+function summarizeQueue(messages) {
+  let queued = 0, sending = 0, sent = 0, failed = 0, suppressed = 0;
+  for (const m of messages || []) {
+    if (m.status === 'queued') queued++;
+    else if (m.status === 'sending') sending++;
+    else if (m.status === 'sent') sent++;
+    else if (m.status === 'failed') failed++;
+    else if (m.status === 'suppressed') suppressed++;
+  }
+  queueSummaryEl.innerHTML =
+    '<span class="stat">queued: <code>' + queued + '</code></span>' +
+    '<span class="stat">sending: <code>' + sending + '</code></span>' +
+    '<span class="stat">sent: <code>' + sent + '</code></span>' +
+    '<span class="stat">failed: <code>' + failed + '</code></span>' +
+    '<span class="stat">suppressed: <code>' + suppressed + '</code></span>';
 }
 
 async function loadLogs() {
@@ -1007,6 +1059,7 @@ async function loadLogs() {
     return;
   }
   const data = await res.json();
+  summarizeQueue(data.messages || []);
   rowsEl.innerHTML = '';
   for (const m of data.messages || []) {
     const tr = document.createElement('tr');
@@ -1054,6 +1107,62 @@ document.getElementById('retrySelected').addEventListener('click', async () => {
   });
   statusEl.textContent = 'Retry HTTP ' + res.status;
   timelineEl.textContent = await res.text();
+});
+
+async function postJSON(path, payload) {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...readHeaders() },
+    body: JSON.stringify(payload),
+  });
+}
+
+document.getElementById('addSuppression').addEventListener('click', async () => {
+  const email = document.getElementById('suppressionEmail').value.trim();
+  const reason = document.getElementById('suppressionReason').value.trim() || 'manual';
+  if (!email) {
+    statusEl.textContent = 'Suppression email is required.';
+    return;
+  }
+  const res = await postJSON('/v1/suppressions', {
+    workspace_id: workspaceId,
+    email,
+    reason,
+  });
+  statusEl.textContent = 'Suppression HTTP ' + res.status;
+  timelineEl.textContent = await res.text();
+});
+
+document.getElementById('addUnsubscribe').addEventListener('click', async () => {
+  const email = document.getElementById('suppressionEmail').value.trim();
+  const reason = document.getElementById('suppressionReason').value.trim() || 'user_unsubscribed';
+  if (!email) {
+    statusEl.textContent = 'Unsubscribe email is required.';
+    return;
+  }
+  const res = await postJSON('/v1/unsubscribes', {
+    workspace_id: workspaceId,
+    email,
+    reason,
+  });
+  statusEl.textContent = 'Unsubscribe HTTP ' + res.status;
+  timelineEl.textContent = await res.text();
+});
+
+document.getElementById('checkDomain').addEventListener('click', async () => {
+  const domain = document.getElementById('domainName').value.trim();
+  const dkimSelector = document.getElementById('dkimSelector').value.trim();
+  if (!domain) {
+    statusEl.textContent = 'Domain is required.';
+    return;
+  }
+  const res = await postJSON('/v1/domains/readiness', {
+    workspace_id: workspaceId,
+    domain,
+    dkim_selector: dkimSelector,
+  });
+  statusEl.textContent = 'Domain readiness HTTP ' + res.status;
+  domainResultEl.textContent = await res.text();
 });
 </script>
 </body></html>`
