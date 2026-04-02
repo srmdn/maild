@@ -302,5 +302,8 @@ GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
 ## Governance Docs
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+- [AGENTS.md](AGENTS.md)
+- [CLAUDE.md](CLAUDE.md)
 - [SECURITY.md](SECURITY.md)
+- [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md)
 - [docs/release-risk-checklist.md](docs/release-risk-checklist.md)
