@@ -998,6 +998,16 @@ h1,h2{margin-top:1.6rem}
     </div>
     <pre id="domainResult"></pre>
   </section>
+  <section class="panel">
+    <h2>Webhook Dead Letters</h2>
+    <label>Limit</label>
+    <input id="webhookLimit" type="number" value="20" min="1" max="200" />
+    <button id="loadDeadLetters">Load Dead Letters</button>
+    <label>Replay Event ID</label><br />
+    <input id="webhookEventId" type="number" placeholder="optional single event id" />
+    <button id="replayDeadLetters">Replay</button>
+    <pre id="webhookResult"></pre>
+  </section>
 </div>
 <p id="status"></p>
 <h2>Message Logs</h2>
@@ -1024,6 +1034,7 @@ const timelineEl = document.getElementById('timeline');
 const selectedIdEl = document.getElementById('selectedMessageId');
 const queueSummaryEl = document.getElementById('queueSummary');
 const domainResultEl = document.getElementById('domainResult');
+const webhookResultEl = document.getElementById('webhookResult');
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
@@ -1163,6 +1174,30 @@ document.getElementById('checkDomain').addEventListener('click', async () => {
   });
   statusEl.textContent = 'Domain readiness HTTP ' + res.status;
   domainResultEl.textContent = await res.text();
+});
+
+document.getElementById('loadDeadLetters').addEventListener('click', async () => {
+  const limit = Number(document.getElementById('webhookLimit').value || 20);
+  const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&status=dead_letter&limit=' + limit, {
+    headers: readHeaders(),
+  });
+  statusEl.textContent = 'Webhook logs HTTP ' + res.status;
+  webhookResultEl.textContent = await res.text();
+});
+
+document.getElementById('replayDeadLetters').addEventListener('click', async () => {
+  const eventID = Number(document.getElementById('webhookEventId').value || 0);
+  const limit = Number(document.getElementById('webhookLimit').value || 20);
+  const payload = {
+    workspace_id: workspaceId,
+    limit,
+  };
+  if (eventID > 0) {
+    payload.event_ids = [eventID];
+  }
+  const res = await postJSON('/v1/webhooks/replay', payload);
+  statusEl.textContent = 'Webhook replay HTTP ' + res.status;
+  webhookResultEl.textContent = await res.text();
 });
 </script>
 </body></html>`

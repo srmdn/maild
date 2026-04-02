@@ -254,6 +254,7 @@ http://localhost:8080/ui/logs?workspace_id=1
 - timeline drill-down and controlled message retry by message ID
 - domain readiness check (SPF/DKIM/DMARC) via existing API
 - suppression/unsubscribe quick actions (requires admin API key for those writes)
+- webhook dead-letter view and replay controls
 
 Analytics/export and billing metering:
 
