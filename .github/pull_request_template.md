@@ -4,7 +4,8 @@ Describe what changed and why.
 
 ## Testing
 
-- [ ] `go test ./...`
+- [ ] `make verify`
+- [ ] `make verify-full` (recommended when dependency/security impact exists)
 - [ ] manual smoke test (if behavior changed)
 - [ ] migration impact checked (if schema/data changed)
 

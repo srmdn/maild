@@ -36,6 +36,13 @@ cp scripts/pre-commit .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
+Optional local pre-push check:
+
+```sh
+cp scripts/pre-push .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
 Run check manually:
 
 ```sh
@@ -57,6 +64,15 @@ make verify
 - build (`go build ./...`)
 - tests (`go test ./...`)
 - commit attribution check (`scripts/check-commit-attribution.sh`)
+
+For a security-inclusive local pass, run:
+
+```sh
+make verify-full
+```
+
+`make verify-full` runs `make verify` plus vulnerability checks via
+`govulncheck ./...`.
 
 Before requesting review for mail flow changes:
 - test success path and failure path
