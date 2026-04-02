@@ -98,6 +98,42 @@ func TestRetryMessagesLatestFailedWindow(t *testing.T) {
 	}
 }
 
+func TestRetryMessagesQueueOutageThenRecovery(t *testing.T) {
+	store := &retryStore{
+		messagesByID: map[int64]domain.Message{
+			77: {ID: 77, WorkspaceID: 1, Status: "failed"},
+		},
+	}
+	queue := &retryQueue{enqueueErr: errors.New("queue down")}
+	svc := NewMessageService(store, queue, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+
+	first, err := svc.RetryMessages(context.Background(), 1, []int64{77}, 0)
+	if err != nil {
+		t.Fatalf("first RetryMessages error = %v", err)
+	}
+	if first.Retried != 0 || first.Failed != 1 {
+		t.Fatalf("first result = %#v, want failed retry", first)
+	}
+	if store.messagesByID[77].Status != "failed" {
+		t.Fatalf("status after outage = %q, want failed", store.messagesByID[77].Status)
+	}
+
+	queue.enqueueErr = nil
+	second, err := svc.RetryMessages(context.Background(), 1, []int64{77}, 0)
+	if err != nil {
+		t.Fatalf("second RetryMessages error = %v", err)
+	}
+	if second.Retried != 1 || second.Failed != 0 {
+		t.Fatalf("second result = %#v, want successful retry", second)
+	}
+	if store.messagesByID[77].Status != "queued" {
+		t.Fatalf("status after recovery = %q, want queued", store.messagesByID[77].Status)
+	}
+	if len(queue.enqueued) != 1 || queue.enqueued[0] != 77 {
+		t.Fatalf("enqueued = %#v, want [77]", queue.enqueued)
+	}
+}
+
 type retryStore struct {
 	messagesByID map[int64]domain.Message
 	listMessages []domain.Message
