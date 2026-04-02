@@ -127,6 +127,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"/ui/policy",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicyUI)),
 	)
+	mux.HandleFunc(
+		"/ui/logs",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogsUI)),
+	)
 	if h.webhooksEnabled {
 		mux.HandleFunc("/v1/webhooks/events", h.receiveWebhookEvent)
 	}
@@ -879,6 +883,112 @@ form.addEventListener('submit', async (e) => {
   document.getElementById('status').textContent = 'HTTP ' + res.status;
   document.getElementById('result').textContent = text;
 });
+</script>
+</body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(html))
+}
+
+func (h *Handler) messageLogsUI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	html := `<!doctype html>
+<html><head><meta charset="utf-8"><title>maild logs</title>
+<style>
+body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:1100px}
+code{background:#f2f2f2;padding:.1rem .3rem}
+input{padding:.5rem;margin:.25rem .25rem .75rem 0}
+button{padding:.6rem 1rem}
+table{width:100%;border-collapse:collapse;margin-top:1rem}
+th,td{border-bottom:1px solid #ddd;padding:.5rem;text-align:left;vertical-align:top}
+tr:hover{background:#fafafa;cursor:pointer}
+pre{background:#f8f8f8;padding:1rem;overflow:auto}
+</style>
+</head><body>
+<h1>Message Logs</h1>
+<p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
+<label>API Key</label><br />
+<input id="apiKey" type="text" placeholder="change-me-operator" size="42" />
+<label>Limit</label>
+<input id="limit" type="number" value="25" min="1" max="500" />
+<button id="refresh">Refresh Logs</button>
+<p id="status"></p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>To</th>
+      <th>Subject</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Updated</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<h2>Timeline</h2>
+<pre id="timeline">Select a row to view attempts.</pre>
+<script>
+const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
+const statusEl = document.getElementById('status');
+const rowsEl = document.getElementById('rows');
+const timelineEl = document.getElementById('timeline');
+
+function readHeaders() {
+  const key = document.getElementById('apiKey').value.trim();
+  return key ? { 'X-API-Key': key } : {};
+}
+
+async function loadLogs() {
+  const limit = Number(document.getElementById('limit').value || 25);
+  const res = await fetch('/v1/messages/logs?workspace_id=' + workspaceId + '&limit=' + limit, {
+    headers: readHeaders(),
+  });
+  statusEl.textContent = 'Logs HTTP ' + res.status;
+  if (!res.ok) {
+    rowsEl.innerHTML = '';
+    timelineEl.textContent = await res.text();
+    return;
+  }
+  const data = await res.json();
+  rowsEl.innerHTML = '';
+  for (const m of data.messages || []) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + m.id + '</td>' +
+      '<td>' + m.to_email + '</td>' +
+      '<td>' + m.subject + '</td>' +
+      '<td>' + m.status + '</td>' +
+      '<td>' + m.created_at + '</td>' +
+      '<td>' + m.updated_at + '</td>';
+    tr.addEventListener('click', () => loadTimeline(m.id));
+    rowsEl.appendChild(tr);
+  }
+  if ((data.messages || []).length === 0) {
+    timelineEl.textContent = 'No messages found for this workspace.';
+  }
+}
+
+async function loadTimeline(messageId) {
+  const res = await fetch('/v1/messages/timeline?message_id=' + messageId, {
+    headers: readHeaders(),
+  });
+  if (!res.ok) {
+    timelineEl.textContent = 'Timeline HTTP ' + res.status + '\n' + await res.text();
+    return;
+  }
+  const data = await res.json();
+  timelineEl.textContent = JSON.stringify(data, null, 2);
+}
+
+document.getElementById('refresh').addEventListener('click', loadLogs);
 </script>
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

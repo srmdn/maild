@@ -66,6 +66,7 @@ http://localhost:8025
 - `GET /v1/analytics/summary`
 - `GET /v1/analytics/export.csv`
 - `GET /v1/billing/metering`
+- `GET /ui/logs` (minimal operator read-only logs/timeline view)
 
 Example:
 
@@ -230,6 +231,12 @@ Policy UI:
 
 ```text
 http://localhost:8080/ui/policy?workspace_id=1
+```
+
+Operator logs UI:
+
+```text
+http://localhost:8080/ui/logs?workspace_id=1
 ```
 
 Analytics/export and billing metering:
