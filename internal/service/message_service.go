@@ -181,7 +181,7 @@ func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fr
 		return domain.Message{}, err
 	}
 
-	if suppressed {
+	if suppressed || unsubscribed {
 		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
 			WorkspaceID: workspaceID,
 			MessageID:   m.ID,
