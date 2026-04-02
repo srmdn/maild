@@ -1,7 +1,7 @@
 APP_NAME=maild
 MAIN_PACKAGE=./cmd/server
 
-.PHONY: setup run build test tidy
+.PHONY: setup run build test tidy fmt-check check-attribution verify
 
 setup:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -20,3 +20,16 @@ test:
 
 tidy:
 	go mod tidy
+
+fmt-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Unformatted files:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+
+check-attribution:
+	./scripts/check-commit-attribution.sh
+
+verify: fmt-check build test check-attribution

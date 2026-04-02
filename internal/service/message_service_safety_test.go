@@ -88,10 +88,10 @@ func (q *safetyQueue) Dequeue(context.Context, time.Duration) (int64, bool, erro
 }
 
 type safetyStore struct {
-	suppressed     bool
-	unsubscribed   bool
-	messagesByID   map[int64]domain.Message
-	nextMessageID  int64
+	suppressed      bool
+	unsubscribed    bool
+	messagesByID    map[int64]domain.Message
+	nextMessageID   int64
 	transitionCalls int
 }
 
@@ -158,7 +158,9 @@ func (s *safetyStore) ListMessages(context.Context, int64, int, time.Time, time.
 func (s *safetyStore) CountMessagesSince(context.Context, int64, string, time.Time) (int64, error) {
 	return 0, nil
 }
-func (s *safetyStore) UpsertWorkspacePolicy(context.Context, domain.WorkspacePolicy) error { return nil }
+func (s *safetyStore) UpsertWorkspacePolicy(context.Context, domain.WorkspacePolicy) error {
+	return nil
+}
 func (s *safetyStore) GetWorkspacePolicy(context.Context, int64) (domain.WorkspacePolicy, bool, error) {
 	return domain.WorkspacePolicy{}, false, nil
 }
@@ -184,4 +186,3 @@ func (s *safetyStore) ListWebhookDeadLettersByID(context.Context, int64, []int64
 func (s *safetyStore) UpdateWebhookEventReplayResult(context.Context, int64, string, int, string) error {
 	return nil
 }
-

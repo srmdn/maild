@@ -46,6 +46,18 @@ Cleanup runbook: [docs/AI-COMMIT-CLEANUP.md](docs/AI-COMMIT-CLEANUP.md)
 
 ## Development Expectations
 
+Before opening or updating a PR, run:
+
+```sh
+make verify
+```
+
+`make verify` runs:
+- formatting check (`gofmt -l .`)
+- build (`go build ./...`)
+- tests (`go test ./...`)
+- commit attribution check (`scripts/check-commit-attribution.sh`)
+
 Before requesting review for mail flow changes:
 - test success path and failure path
 - verify retry behavior and max retry boundaries
