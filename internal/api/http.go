@@ -993,6 +993,10 @@ h1,h2{margin-top:1.6rem}
     <label>Selected Message ID</label>
     <input id="selectedMessageId" type="number" placeholder="click a row" />
     <button id="retrySelected">Retry Selected</button>
+    <button id="retryChecked">Retry Checked Rows</button>
+    <label>Bulk Message IDs (comma/newline)</label><br />
+    <textarea id="bulkMessageIds" rows="3" placeholder="101,102,103"></textarea>
+    <button id="retryBulkIds">Retry Bulk IDs</button>
   </section>
   <section class="panel">
     <h2>Suppression Tools</h2>
@@ -1026,6 +1030,9 @@ h1,h2{margin-top:1.6rem}
     <label>Replay Event ID</label><br />
     <input id="webhookEventId" type="number" placeholder="optional single event id" />
     <button id="replayDeadLetters">Replay</button>
+    <label>Bulk Event IDs (comma/newline)</label><br />
+    <textarea id="bulkWebhookIds" rows="3" placeholder="201,202,203"></textarea>
+    <button id="replayBulkIds">Replay Bulk IDs</button>
     <pre id="webhookResult"></pre>
   </section>
 </div>
@@ -1034,6 +1041,7 @@ h1,h2{margin-top:1.6rem}
 <table>
   <thead>
     <tr>
+      <th>Select</th>
       <th>ID</th>
       <th>To</th>
       <th>Subject</th>
@@ -1058,6 +1066,7 @@ const webhookResultEl = document.getElementById('webhookResult');
 const activeFilterEl = document.getElementById('activeFilter');
 const savedFilterKey = 'maild_operator_saved_filter';
 let savedFilter = { message_status: '', webhook_status: '', from: '', to: '' };
+const selectedMessageIDs = new Set();
 
 function readHeaders() {
   const key = document.getElementById('apiKey').value.trim();
@@ -1132,6 +1141,20 @@ function summarizeQueue(messages) {
     '<span class="stat">suppressed: <code>' + suppressed + '</code></span>';
 }
 
+function parseIDList(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw || '').split(/[\s,]+/)) {
+    if (!part) continue;
+    const n = Number(part);
+    if (!Number.isInteger(n) || n <= 0) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
 async function loadLogs() {
   const limit = Number(document.getElementById('limit').value || 25);
   let url = '/v1/messages/logs?workspace_id=' + workspaceId + '&limit=' + limit;
@@ -1155,14 +1178,24 @@ async function loadLogs() {
   rowsEl.innerHTML = '';
   for (const m of messages) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + m.id + '</td>' +
+    tr.innerHTML = '<td><input type="checkbox" data-mid="' + m.id + '"></td>' +
+      '<td>' + m.id + '</td>' +
       '<td>' + m.to_email + '</td>' +
       '<td>' + m.subject + '</td>' +
       '<td>' + m.status + '</td>' +
       '<td>' + m.created_at + '</td>' +
       '<td>' + m.updated_at + '</td>';
-    tr.addEventListener('click', () => loadTimeline(m.id));
+    tr.addEventListener('click', (e) => {
+      if (e.target && e.target.matches && e.target.matches('input[type="checkbox"]')) return;
+      loadTimeline(m.id);
+    });
     rowsEl.appendChild(tr);
+    const cb = tr.querySelector('input[type="checkbox"]');
+    cb.checked = selectedMessageIDs.has(m.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedMessageIDs.add(m.id);
+      else selectedMessageIDs.delete(m.id);
+    });
   }
   if (messages.length === 0) {
     timelineEl.textContent = 'No messages found for this workspace.';
@@ -1182,11 +1215,9 @@ async function loadTimeline(messageId) {
   timelineEl.textContent = JSON.stringify(data, null, 2);
 }
 
-document.getElementById('refresh').addEventListener('click', loadLogs);
-document.getElementById('retrySelected').addEventListener('click', async () => {
-  const messageId = Number(selectedIdEl.value || 0);
-  if (!messageId) {
-    statusEl.textContent = 'Select a message row first.';
+async function retryMessageIDs(ids) {
+  if (!ids || ids.length === 0) {
+    statusEl.textContent = 'No message IDs provided.';
     return;
   }
   const res = await fetch('/v1/messages/retry', {
@@ -1194,11 +1225,30 @@ document.getElementById('retrySelected').addEventListener('click', async () => {
     headers: { 'Content-Type': 'application/json', ...readHeaders() },
     body: JSON.stringify({
       workspace_id: workspaceId,
-      message_ids: [messageId]
+      message_ids: ids
     }),
   });
   statusEl.textContent = 'Retry HTTP ' + res.status;
   timelineEl.textContent = await res.text();
+}
+
+document.getElementById('refresh').addEventListener('click', loadLogs);
+document.getElementById('retrySelected').addEventListener('click', async () => {
+  const messageId = Number(selectedIdEl.value || 0);
+  if (!messageId) {
+    statusEl.textContent = 'Select a message row first.';
+    return;
+  }
+  await retryMessageIDs([messageId]);
+});
+
+document.getElementById('retryChecked').addEventListener('click', async () => {
+  await retryMessageIDs(Array.from(selectedMessageIDs));
+});
+
+document.getElementById('retryBulkIds').addEventListener('click', async () => {
+  const ids = parseIDList(document.getElementById('bulkMessageIds').value);
+  await retryMessageIDs(ids);
 });
 
 async function postJSON(path, payload) {
@@ -1283,6 +1333,20 @@ document.getElementById('replayDeadLetters').addEventListener('click', async () 
     payload.event_ids = [eventID];
   }
   const res = await postJSON('/v1/webhooks/replay', payload);
+  statusEl.textContent = 'Webhook replay HTTP ' + res.status;
+  webhookResultEl.textContent = await res.text();
+});
+
+document.getElementById('replayBulkIds').addEventListener('click', async () => {
+  const ids = parseIDList(document.getElementById('bulkWebhookIds').value);
+  if (ids.length === 0) {
+    statusEl.textContent = 'No webhook event IDs provided.';
+    return;
+  }
+  const res = await postJSON('/v1/webhooks/replay', {
+    workspace_id: workspaceId,
+    event_ids: ids,
+  });
   statusEl.textContent = 'Webhook replay HTTP ' + res.status;
   webhookResultEl.textContent = await res.text();
 });

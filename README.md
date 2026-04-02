@@ -260,6 +260,7 @@ http://localhost:8080/ui/logs?workspace_id=1
 - webhook dead-letter view and replay controls
 - saved filter presets for `failed`, `suppressed`, and `dead_letter` views
 - time-range filtering (`from`/`to`) for message logs and webhook logs
+- bulk retry/replay actions with per-item outcomes
 
 Analytics/export and billing metering:
 
