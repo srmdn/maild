@@ -96,6 +96,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageTimeline)),
 	)
 	mux.HandleFunc(
+		"/v1/ops/onboarding-checklist",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.onboardingChecklist)),
+	)
+	mux.HandleFunc(
+		"/v1/incidents/bundle",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.incidentBundleExport)),
+	)
+	mux.HandleFunc(
 		"/v1/messages/logs",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
 	)
@@ -675,6 +683,87 @@ func (h *Handler) messageTimeline(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) onboardingChecklist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+
+	checklist, err := h.messages.TechnicalOnboardingChecklist(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	domainName := strings.TrimSpace(r.URL.Query().Get("domain"))
+	dkimSelector := strings.TrimSpace(r.URL.Query().Get("dkim_selector"))
+	if domainName != "" {
+		item := domain.OnboardingChecklistItem{
+			ID:          "domain_readiness_checked",
+			Title:       "Check Domain Readiness",
+			Description: "SPF, DKIM, and DMARC readiness has been validated for the sending domain.",
+			Done:        false,
+			Action:      "POST /v1/domains/readiness",
+		}
+		result, readinessErr := h.domains.CheckReadiness(r.Context(), workspaceID, domainName, dkimSelector)
+		if readinessErr != nil {
+			item.Evidence = "domain readiness check failed"
+		} else {
+			item.Done = result.Ready
+			item.Evidence = "spf=" + strconv.FormatBool(result.SPFValid) +
+				", dkim=" + strconv.FormatBool(result.DKIMValid) +
+				", dmarc=" + strconv.FormatBool(result.DMARCValid)
+		}
+		checklist.Items = append(checklist.Items, item)
+		checklist.Total = len(checklist.Items)
+		checklist.Completed = 0
+		for _, it := range checklist.Items {
+			if it.Done {
+				checklist.Completed++
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, checklist)
+}
+
+func (h *Handler) incidentBundleExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
+	if err != nil {
+		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		return
+	}
+	messageID, err := parseInt64Query(r, "message_id", 0)
+	if err != nil || messageID <= 0 {
+		http.Error(w, "message_id is required", http.StatusBadRequest)
+		return
+	}
+
+	bundle, err := h.messages.IncidentBundle(r.Context(), workspaceID, messageID)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "workspace mismatch") {
+			writeError(w, http.StatusNotFound, "message not found for workspace")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="maild_incident_bundle_message_`+strconv.FormatInt(messageID, 10)+`.json"`)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(bundle)
+}
+
 func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1021,6 +1110,17 @@ h1,h2{margin-top:1.6rem}
     <pre id="domainResult"></pre>
   </section>
   <section class="panel">
+    <h2>Onboarding Checklist</h2>
+    <label>Domain (optional)</label><br />
+    <input id="onboardingDomain" type="text" placeholder="maild.click" size="26" />
+    <label>DKIM Selector (optional)</label><br />
+    <input id="onboardingSelector" type="text" placeholder="default" size="26" />
+    <div>
+      <button id="loadOnboardingChecklist">Load Checklist</button>
+    </div>
+    <pre id="onboardingResult"></pre>
+  </section>
+  <section class="panel">
     <h2>Webhook Dead Letters</h2>
     <label>Limit</label>
     <input id="webhookLimit" type="number" value="20" min="1" max="200" />
@@ -1034,6 +1134,15 @@ h1,h2{margin-top:1.6rem}
     <textarea id="bulkWebhookIds" rows="3" placeholder="201,202,203"></textarea>
     <button id="replayBulkIds">Replay Bulk IDs</button>
     <pre id="webhookResult"></pre>
+  </section>
+  <section class="panel">
+    <h2>Incident Bundle</h2>
+    <label>Message ID</label><br />
+    <input id="incidentMessageId" type="number" placeholder="click a row or enter id" />
+    <div>
+      <button id="exportIncidentBundle">Export Incident Bundle</button>
+    </div>
+    <pre id="incidentBundleResult"></pre>
   </section>
 </div>
 <p id="status"></p>
@@ -1063,6 +1172,8 @@ const selectedIdEl = document.getElementById('selectedMessageId');
 const queueSummaryEl = document.getElementById('queueSummary');
 const domainResultEl = document.getElementById('domainResult');
 const webhookResultEl = document.getElementById('webhookResult');
+const onboardingResultEl = document.getElementById('onboardingResult');
+const incidentBundleResultEl = document.getElementById('incidentBundleResult');
 const activeFilterEl = document.getElementById('activeFilter');
 const savedFilterKey = 'maild_operator_saved_filter';
 let savedFilter = { message_status: '', webhook_status: '', from: '', to: '' };
@@ -1103,6 +1214,12 @@ function updateActiveFilterLabel() {
   if (savedFilter.from) parts.push('from=' + savedFilter.from);
   if (savedFilter.to) parts.push('to=' + savedFilter.to);
   activeFilterEl.textContent = parts.length === 0 ? 'Saved filter: none' : 'Saved filter: ' + parts.join(', ');
+}
+
+function selectedIncidentMessageID() {
+  const v = Number(document.getElementById('incidentMessageId').value || selectedIdEl.value || 0);
+  if (!Number.isInteger(v) || v <= 0) return 0;
+  return v;
 }
 
 function localDateTimeValueFromRFC3339(raw) {
@@ -1204,6 +1321,7 @@ async function loadLogs() {
 
 async function loadTimeline(messageId) {
   selectedIdEl.value = String(messageId);
+  document.getElementById('incidentMessageId').value = String(messageId);
   const res = await fetch('/v1/messages/timeline?message_id=' + messageId, {
     headers: readHeaders(),
   });
@@ -1320,6 +1438,23 @@ document.getElementById('checkDomain').addEventListener('click', async () => {
   domainResultEl.textContent = await res.text();
 });
 
+document.getElementById('loadOnboardingChecklist').addEventListener('click', async () => {
+  const domain = document.getElementById('onboardingDomain').value.trim();
+  const selector = document.getElementById('onboardingSelector').value.trim();
+  let url = '/v1/ops/onboarding-checklist?workspace_id=' + workspaceId;
+  if (domain) {
+    url += '&domain=' + encodeURIComponent(domain);
+  }
+  if (selector) {
+    url += '&dkim_selector=' + encodeURIComponent(selector);
+  }
+  const res = await fetch(url, {
+    headers: readHeaders(),
+  });
+  statusEl.textContent = 'Onboarding checklist HTTP ' + res.status;
+  onboardingResultEl.textContent = await res.text();
+});
+
 document.getElementById('loadDeadLetters').addEventListener('click', loadWebhookLogs);
 
 document.getElementById('replayDeadLetters').addEventListener('click', async () => {
@@ -1349,6 +1484,19 @@ document.getElementById('replayBulkIds').addEventListener('click', async () => {
   });
   statusEl.textContent = 'Webhook replay HTTP ' + res.status;
   webhookResultEl.textContent = await res.text();
+});
+
+document.getElementById('exportIncidentBundle').addEventListener('click', async () => {
+  const messageId = selectedIncidentMessageID();
+  if (!messageId) {
+    statusEl.textContent = 'Message ID is required for incident bundle export.';
+    return;
+  }
+  const res = await fetch('/v1/incidents/bundle?workspace_id=' + workspaceId + '&message_id=' + messageId, {
+    headers: readHeaders(),
+  });
+  statusEl.textContent = 'Incident bundle HTTP ' + res.status;
+  incidentBundleResultEl.textContent = await res.text();
 });
 
 document.getElementById('filterFailed').addEventListener('click', () => {
@@ -1405,6 +1553,7 @@ loadSavedFilter();
 document.getElementById('rangeFrom').value = localDateTimeValueFromRFC3339(savedFilter.from);
 document.getElementById('rangeTo').value = localDateTimeValueFromRFC3339(savedFilter.to);
 updateActiveFilterLabel();
+document.getElementById('incidentMessageId').value = selectedIdEl.value;
 </script>
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

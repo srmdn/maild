@@ -419,6 +419,171 @@ func (s *MessageService) MessageLogs(ctx context.Context, workspaceID int64, lim
 	return s.store.ListMessages(ctx, workspaceID, limit, from, to)
 }
 
+func (s *MessageService) TechnicalOnboardingChecklist(ctx context.Context, workspaceID int64) (domain.OnboardingChecklist, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+
+	accounts, err := s.store.ListSMTPAccounts(ctx, workspaceID)
+	if err != nil {
+		return domain.OnboardingChecklist{}, err
+	}
+	policy, err := s.workspacePolicy(ctx, workspaceID)
+	if err != nil {
+		return domain.OnboardingChecklist{}, err
+	}
+	messages, err := s.store.ListMessages(ctx, workspaceID, 1, time.Time{}, time.Time{})
+	if err != nil {
+		return domain.OnboardingChecklist{}, err
+	}
+	webhooks, err := s.store.ListWebhookEvents(ctx, workspaceID, 1, "", time.Time{}, time.Time{})
+	if err != nil {
+		return domain.OnboardingChecklist{}, err
+	}
+
+	hasActive := false
+	for _, a := range accounts {
+		if a.Active {
+			hasActive = true
+			break
+		}
+	}
+
+	items := []domain.OnboardingChecklistItem{
+		{
+			ID:          "smtp_account_configured",
+			Title:       "Configure SMTP Account",
+			Description: "At least one workspace SMTP account is configured.",
+			Done:        len(accounts) > 0,
+			Evidence:    fmt.Sprintf("%d account(s) configured", len(accounts)),
+			Action:      "POST /v1/smtp-accounts and POST /v1/smtp-accounts/validate",
+		},
+		{
+			ID:          "active_smtp_provider_selected",
+			Title:       "Select Active Provider",
+			Description: "One SMTP account is marked active.",
+			Done:        hasActive,
+			Evidence:    fmt.Sprintf("active provider found: %t", hasActive),
+			Action:      "POST /v1/smtp-accounts/activate",
+		},
+		{
+			ID:          "provider_failover_ready",
+			Title:       "Prepare Provider Failover",
+			Description: "At least two SMTP accounts are available for failover.",
+			Done:        len(accounts) >= 2,
+			Evidence:    fmt.Sprintf("%d provider profile(s) available", len(accounts)),
+			Action:      "Add at least one standby SMTP provider for failover",
+		},
+		{
+			ID:          "workspace_policy_reviewed",
+			Title:       "Review Workspace Policy",
+			Description: "Workspace rate limits and blocked domains are set.",
+			Done:        policy.RateLimitWorkspacePerHour > 0 && policy.RateLimitDomainPerHour > 0,
+			Evidence: fmt.Sprintf(
+				"workspace/hour=%d, domain/hour=%d, blocked_domains=%d",
+				policy.RateLimitWorkspacePerHour,
+				policy.RateLimitDomainPerHour,
+				len(policy.BlockedRecipientDomains),
+			),
+			Action: "GET/POST /v1/workspaces/policy",
+		},
+		{
+			ID:          "message_flow_verified",
+			Title:       "Verify Message Flow",
+			Description: "At least one message has been queued and tracked.",
+			Done:        len(messages) > 0,
+			Evidence:    fmt.Sprintf("recent messages observed: %d", len(messages)),
+			Action:      "POST /v1/messages and review /v1/messages/logs",
+		},
+		{
+			ID:          "webhook_flow_verified",
+			Title:       "Verify Webhook Processing",
+			Description: "At least one webhook event has been processed.",
+			Done:        len(webhooks) > 0,
+			Evidence:    fmt.Sprintf("recent webhook events observed: %d", len(webhooks)),
+			Action:      "POST /v1/webhooks/events and review /v1/webhooks/logs",
+		},
+	}
+
+	completed := 0
+	for _, item := range items {
+		if item.Done {
+			completed++
+		}
+	}
+
+	return domain.OnboardingChecklist{
+		WorkspaceID: workspaceID,
+		GeneratedAt: time.Now().UTC(),
+		Completed:   completed,
+		Total:       len(items),
+		Items:       items,
+	}, nil
+}
+
+func (s *MessageService) IncidentBundle(ctx context.Context, workspaceID, messageID int64) (domain.IncidentBundle, error) {
+	if workspaceID == 0 {
+		workspaceID = 1
+	}
+	if messageID <= 0 {
+		return domain.IncidentBundle{}, errors.New("message_id is required")
+	}
+
+	message, attempts, err := s.MessageTimeline(ctx, messageID)
+	if err != nil {
+		return domain.IncidentBundle{}, err
+	}
+	if message.WorkspaceID != workspaceID {
+		return domain.IncidentBundle{}, errors.New("workspace mismatch")
+	}
+
+	from := message.CreatedAt.Add(-24 * time.Hour)
+	to := message.UpdatedAt.Add(24 * time.Hour)
+	if !to.After(from) {
+		to = from.Add(48 * time.Hour)
+	}
+
+	webhooks, err := s.store.ListWebhookEvents(ctx, workspaceID, 200, "", from, to)
+	if err != nil {
+		return domain.IncidentBundle{}, err
+	}
+	recipient := strings.ToLower(strings.TrimSpace(message.ToEmail))
+	related := make([]domain.WebhookEvent, 0, len(webhooks))
+	for _, w := range webhooks {
+		if strings.ToLower(strings.TrimSpace(w.Email)) != recipient {
+			continue
+		}
+		related = append(related, w)
+	}
+
+	summary := domain.IncidentBundleSummary{
+		AttemptedSends:         len(attempts),
+		RelatedWebhookOutcomes: len(related),
+	}
+	for _, attempt := range attempts {
+		if !attempt.Success {
+			summary.FailedAttempts++
+		}
+	}
+	for _, w := range related {
+		if strings.EqualFold(w.Status, "dead_letter") {
+			summary.DeadLetterWebhooks++
+		}
+	}
+
+	return domain.IncidentBundle{
+		WorkspaceID:       workspaceID,
+		MessageID:         messageID,
+		GeneratedAt:       time.Now().UTC(),
+		WebhookWindowFrom: from,
+		WebhookWindowTo:   to,
+		Message:           message,
+		Attempts:          attempts,
+		WebhookOutcomes:   related,
+		Summary:           summary,
+	}, nil
+}
+
 func (s *MessageService) RetryMessages(ctx context.Context, workspaceID int64, messageIDs []int64, limit int) (domain.MessageRetryResult, error) {
 	if workspaceID == 0 {
 		workspaceID = 1

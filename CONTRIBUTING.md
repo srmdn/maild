@@ -84,3 +84,28 @@ Before requesting review for mail flow changes:
 
 Please do not open public issues for vulnerabilities.
 See [SECURITY.md](SECURITY.md).
+
+## GitHub issue workflow
+
+Use GitHub Issues for all planned work, bugs, and release tasks.
+
+Labels used in this repository:
+- `bug`
+- `enhancement`
+- `documentation`
+- `frontend`
+- `backend`
+- `priority:high`
+- `priority:medium`
+- `priority:low`
+
+Milestones:
+- `v0.3.0`: backend-first stability and operational readiness release
+- `v0.4.0`: frontend product UX expansion
+
+Issue hygiene rules:
+1. Open one issue per concrete deliverable or bug.
+2. Add at least one scope label (`frontend`, `backend`, or `documentation`).
+3. Add one priority label.
+4. Attach the correct milestone before implementation starts.
+5. Link PRs to issues using `Closes #<number>` when merged.

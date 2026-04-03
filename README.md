@@ -16,7 +16,8 @@ It is not a full mailbox server and does not include IMAP/POP webmail.
 Actively used v0.x control plane:
 - API -> queue -> worker delivery is implemented
 - operator console workflows are available at `/ui/logs` and `/ui/policy`
-- current focus is pilot onboarding, paid conversion, and GA scope freeze
+- backend-first technical scope (Tracks A/B/C) is complete as of April 3, 2026
+- next focus is frontend product UX for broader operator workflows
 
 ## Stack
 
@@ -60,6 +61,8 @@ http://localhost:8025
 - `GET /readyz`
 - `POST /v1/messages`
 - `POST /v1/messages/retry`
+- `GET /v1/ops/onboarding-checklist`
+- `GET /v1/incidents/bundle`
 - `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
 - `GET /v1/webhooks/logs`
 - `POST /v1/webhooks/replay`
@@ -187,6 +190,20 @@ curl -sS -X POST http://localhost:8080/v1/messages/retry \
   -d '{"workspace_id":1,"message_ids":[1]}'
 ```
 
+Technical onboarding checklist:
+
+```sh
+curl -sS "http://localhost:8080/v1/ops/onboarding-checklist?workspace_id=1&domain=maild.click&dkim_selector=default" \
+  -H "X-API-Key: change-me-operator"
+```
+
+Incident bundle export (timeline, attempts, webhook outcomes):
+
+```sh
+curl -sS "http://localhost:8080/v1/incidents/bundle?workspace_id=1&message_id=1" \
+  -H "X-API-Key: change-me-operator"
+```
+
 Provider webhook event ingest (signature required):
 
 ```sh
@@ -261,6 +278,8 @@ http://localhost:8080/ui/logs?workspace_id=1
 - saved filter presets for `failed`, `suppressed`, and `dead_letter` views
 - time-range filtering (`from`/`to`) for message logs and webhook logs
 - bulk retry/replay actions with per-item outcomes
+- technical onboarding checklist workflow (optional domain readiness check)
+- incident bundle export flow for message timeline, attempts, and webhook outcomes
 
 Analytics/export and billing metering:
 
@@ -292,6 +311,7 @@ Basic anti-abuse controls are enabled:
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/release-risk-checklist.md](docs/release-risk-checklist.md)
+- [docs/v0.3.0-release-scope.md](docs/v0.3.0-release-scope.md)
 - [docs/PUBLIC-LAUNCH-CHECKLIST.md](docs/PUBLIC-LAUNCH-CHECKLIST.md)
 - [docs/BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md)
 
