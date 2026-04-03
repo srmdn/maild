@@ -143,6 +143,18 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"/ui/logs",
 		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogsUI)),
 	)
+	mux.HandleFunc(
+		"/ui",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.operatorDashboardUI)),
+	)
+	mux.HandleFunc(
+		"/ui/onboarding",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.onboardingUI)),
+	)
+	mux.HandleFunc(
+		"/ui/incidents",
+		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.incidentUI)),
+	)
 	if h.webhooksEnabled {
 		mux.HandleFunc("/v1/webhooks/events", h.receiveWebhookEvent)
 	}
@@ -986,6 +998,7 @@ func (h *Handler) workspacePolicyUI(w http.ResponseWriter, r *http.Request) {
 <html><head><meta charset="utf-8"><title>maild policy</title>
 <style>body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:760px}code{background:#f2f2f2;padding:.1rem .3rem}input,textarea{width:100%;padding:.5rem;margin:.25rem 0 1rem}button{padding:.6rem 1rem}pre{background:#f8f8f8;padding:1rem;overflow:auto}</style>
 </head><body>
+<p><a href="/ui?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Dashboard</a> · <a href="/ui/logs?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Logs</a> · <a href="/ui/onboarding?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Onboarding</a> · <a href="/ui/incidents?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Incidents</a></p>
 <h1>Workspace Policy</h1>
 <p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
 <label>API Key (admin)</label>
@@ -1056,6 +1069,7 @@ h1,h2{margin-top:1.6rem}
 .hint{color:#555;font-size:.92rem}
 </style>
 </head><body>
+<p><a href="/ui?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Dashboard</a> · <a href="/ui/onboarding?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Onboarding</a> · <a href="/ui/incidents?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Incidents</a> · <a href="/ui/policy?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Policy</a></p>
 <h1>Operator Console</h1>
 <p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
 <label>API Key</label><br />

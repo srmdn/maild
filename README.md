@@ -15,7 +15,7 @@ It is not a full mailbox server and does not include IMAP/POP webmail.
 
 Actively used v0.x control plane:
 - API -> queue -> worker delivery is implemented
-- operator console workflows are available at `/ui/logs` and `/ui/policy`
+- operator console workflows are available at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`
 - backend-first technical scope (Tracks A/B/C) is complete as of April 3, 2026
 - next focus is frontend product UX for broader operator workflows
 
@@ -70,6 +70,9 @@ http://localhost:8025
 - `POST /v1/smtp-accounts/activate`
 - `GET/POST /v1/workspaces/policy`
 - `GET /ui/policy`
+- `GET /ui`
+- `GET /ui/onboarding`
+- `GET /ui/incidents`
 - `GET /v1/analytics/summary`
 - `GET /v1/analytics/export.csv`
 - `GET /v1/billing/metering`
@@ -267,6 +270,24 @@ Operator logs UI:
 
 ```text
 http://localhost:8080/ui/logs?workspace_id=1
+```
+
+Operator dashboard UI:
+
+```text
+http://localhost:8080/ui?workspace_id=1
+```
+
+Operator onboarding UI:
+
+```text
+http://localhost:8080/ui/onboarding?workspace_id=1
+```
+
+Operator incidents UI:
+
+```text
+http://localhost:8080/ui/incidents?workspace_id=1
 ```
 
 `/ui/logs` capabilities:
