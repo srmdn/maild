@@ -86,8 +86,8 @@ curl -sS -X POST http://localhost:8080/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
-    "from_email": "noreply@maild.local",
-    "to_email": "user@example.com",
+    "from_email": "noreply@example.test",
+    "to_email": "user@example.test",
     "subject": "Hello from maild",
     "body_text": "maild first delivery test"
   }'
@@ -101,7 +101,7 @@ curl -sS -X POST http://localhost:8080/v1/suppressions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
-    "email": "user@example.com",
+    "email": "user@example.test",
     "reason": "manual block"
   }'
 ```
@@ -114,7 +114,7 @@ curl -sS -X POST http://localhost:8080/v1/unsubscribes \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
-    "email": "user@example.com",
+    "email": "user@example.test",
     "reason": "user clicked unsubscribe"
   }'
 ```
@@ -127,7 +127,7 @@ curl -sS -X POST http://localhost:8080/v1/domains/readiness \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
-    "domain": "maild.click",
+    "domain": "example.test",
     "dkim_selector": "default"
   }'
 ```
@@ -140,12 +140,12 @@ curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id": 1,
-    "name": "mxroute-main",
-    "host": "smtp.mxroute.com",
+    "name": "primary-smtp",
+    "host": "smtp.example.com",
     "port": 587,
-    "username": "user@example.com",
+    "username": "user@example.test",
     "password": "secret",
-    "from_email": "noreply@maild.click"
+    "from_email": "noreply@example.test"
   }'
 ```
 
@@ -167,7 +167,7 @@ curl -sS "http://localhost:8080/v1/smtp-accounts/list?workspace_id=1" \
 curl -sS -X POST http://localhost:8080/v1/smtp-accounts/activate \
   -H "X-API-Key: change-me-admin" \
   -H "Content-Type: application/json" \
-  -d '{"workspace_id":1,"name":"mxroute-main"}'
+  -d '{"workspace_id":1,"name":"primary-smtp"}'
 ```
 
 Operator message logs view:
@@ -196,7 +196,7 @@ curl -sS -X POST http://localhost:8080/v1/messages/retry \
 Technical onboarding checklist:
 
 ```sh
-curl -sS "http://localhost:8080/v1/ops/onboarding-checklist?workspace_id=1&domain=maild.click&dkim_selector=default" \
+curl -sS "http://localhost:8080/v1/ops/onboarding-checklist?workspace_id=1&domain=example.test&dkim_selector=default" \
   -H "X-API-Key: change-me-operator"
 ```
 
@@ -210,7 +210,7 @@ curl -sS "http://localhost:8080/v1/incidents/bundle?workspace_id=1&message_id=1"
 Provider webhook event ingest (signature required):
 
 ```sh
-body='{"workspace_id":1,"type":"bounce","email":"user@example.com","reason":"hard_bounce"}'
+body='{"workspace_id":1,"type":"bounce","email":"user@example.test","reason":"hard_bounce"}'
 ts="$(date +%s)"
 sig="$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SIGNING_SECRET" -hex | sed 's/^.* //')"
 
