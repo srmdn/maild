@@ -77,9 +77,19 @@ func (h *Handler) operatorDashboardUI(w http.ResponseWriter, r *http.Request) {
       </tr>
     </tbody>
   </table>
+</section>
+
+` + uxValidationPanel(workspaceID, "dashboard") + `
+<section class="md-panel">
+  <h2>Validation Sources</h2>
+  <ul class="md-list">
+    <li>Use the onboarding and incident screens in demo mode before partner sessions.</li>
+    <li>Review the design-partner onboarding runbook when friction appears during pilot setup.</li>
+    <li>Convert notes into task or feature issues before the next UX iteration.</li>
+  </ul>
 </section>`
 
-	html := uiShell("Operator Dashboard", workspaceID, "dashboard", content, ``)
+	html := uiShell("Operator Dashboard", workspaceID, "dashboard", content, uxValidationScript("dashboard", workspaceID))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))
@@ -135,7 +145,9 @@ func (h *Handler) onboardingUI(w http.ResponseWriter, r *http.Request) {
     </thead>
     <tbody id="rows"></tbody>
   </table>
-</section>`
+</section>
+
+` + uxValidationPanel(workspaceID, "onboarding") + ``
 
 	script := `<script>
 const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
@@ -228,7 +240,7 @@ document.getElementById('loadChecklist').addEventListener('click', loadFromAPI);
 document.getElementById('loadDemo').addEventListener('click', () => {
   renderChecklist(demoChecklist());
 });
-</script>`
+</script>` + uxValidationScript("onboarding", workspaceID)
 
 	html := uiShell("Onboarding", workspaceID, "onboarding", content, script)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -279,7 +291,9 @@ func (h *Handler) incidentUI(w http.ResponseWriter, r *http.Request) {
     <pre id="json" class="md-pre">{}</pre>
     <a id="download" class="md-button" hidden download>Download JSON</a>
   </article>
-</section>`
+</section>
+
+` + uxValidationPanel(workspaceID, "incidents") + ``
 
 	script := `<script>
 const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
@@ -395,7 +409,7 @@ document.getElementById('loadDemo').addEventListener('click', () => {
   renderTimeline(bundle);
   attachDownload(bundle, bundle.message.id || 'demo');
 });
-</script>`
+</script>` + uxValidationScript("incidents", workspaceID)
 
 	html := uiShell("Incidents", workspaceID, "incidents", content, script)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -495,7 +509,10 @@ func uiShell(title string, workspaceID int64, active string, content string, scr
     }
     .md-grid{display:grid;gap:var(--md-space-3)}
     .md-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .md-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .md-grid-5{grid-template-columns:repeat(5,minmax(0,1fr))}
     .md-muted{color:var(--md-muted);font-size:var(--md-text-sm)}
+    .md-kicker{color:var(--md-accent);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
     .md-label{display:block;font-size:var(--md-text-sm);margin-bottom:var(--md-space-1)}
     .md-form-row{margin-bottom:var(--md-space-3)}
     .md-input{
@@ -511,6 +528,7 @@ func uiShell(title string, workspaceID int64, active string, content string, scr
       outline-offset:1px;
       border-color:var(--md-accent);
     }
+    .md-textarea{resize:vertical;min-height:110px}
     .md-button{
       display:inline-block;
       text-decoration:none;
@@ -533,17 +551,34 @@ func uiShell(title string, workspaceID int64, active string, content string, scr
     .md-badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid transparent}
     .md-badge-ok{background:#e7f8ee;color:var(--md-ok);border-color:#c2ebd2}
     .md-badge-warn{background:#fff6e3;color:var(--md-warn);border-color:#f0ddb1}
+    .md-badge-danger{background:#fff0ee;color:var(--md-error);border-color:#efc3bf}
+    .md-badge-neutral{background:#edf3f2;color:var(--md-text);border-color:#d4e0de}
     .md-empty{padding:var(--md-space-3);border:1px dashed var(--md-border);border-radius:var(--md-r-1);color:var(--md-muted)}
     .md-error{padding:var(--md-space-2);border:1px solid #efc3bf;background:#fff2f0;color:var(--md-error);border-radius:var(--md-r-1)}
     .md-pre{overflow:auto;background:#101713;color:#eaf5ee;padding:var(--md-space-3);border-radius:var(--md-r-1);font-size:12px;min-height:140px}
+    .md-pre-compact{min-height:120px;max-height:280px}
     .md-timeline{list-style:none;padding:0;margin:0}
     .md-timeline li{padding:10px 0;border-bottom:1px solid var(--md-border);display:flex;justify-content:space-between;gap:var(--md-space-2)}
     .md-timeline li strong{display:block;font-size:var(--md-text-sm)}
     .md-timeline li span{font-size:var(--md-text-sm);color:var(--md-muted)}
+    .md-section-head{display:flex;align-items:start;justify-content:space-between;gap:var(--md-space-2);margin-bottom:var(--md-space-2);flex-wrap:wrap}
+    .md-list{margin:0;padding-left:18px}
+    .md-list li{margin:0 0 10px}
+    .md-hero{position:relative;overflow:hidden}
+    .md-hero::after{content:"";position:absolute;inset:auto -40px -40px auto;width:180px;height:180px;background:radial-gradient(circle, rgba(10,106,79,.18) 0%, rgba(10,106,79,0) 70%)}
+    .md-stat-card{min-height:132px;display:flex;flex-direction:column;justify-content:space-between}
+    .md-stat-value{font-size:2rem;line-height:1;font-weight:700}
+    .md-table-wrap{overflow:auto}
+    .md-table-logs tbody tr:hover{background:var(--md-surface-2);cursor:pointer}
     code{background:var(--md-surface-2);padding:2px 6px;border-radius:6px}
     @media (max-width: 900px){
       .md-shell{padding:var(--md-space-3)}
       .md-grid-2{grid-template-columns:1fr}
+      .md-grid-3{grid-template-columns:1fr}
+      .md-grid-5{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+    @media (max-width: 640px){
+      .md-grid-5{grid-template-columns:1fr}
     }
   </style>
 </head>
@@ -567,4 +602,161 @@ func uiShell(title string, workspaceID int64, active string, content string, scr
   ` + script + `
 </body>
 </html>`
+}
+
+func uxValidationPanel(workspaceID int64, journey string) string {
+	return `<section class="md-panel">
+  <div class="md-section-head">
+    <div>
+      <h2>UX Validation Loop</h2>
+      <p class="md-muted">Capture operator friction from walkthroughs and turn it into a prefilled GitHub issue.</p>
+    </div>
+    <span class="md-badge md-badge-neutral">Journey: ` + journey + `</span>
+  </div>
+  <div class="md-grid md-grid-2">
+    <div>
+      <div class="md-form-row">
+        <label class="md-label" for="uxPartner">Partner or session</label>
+        <input class="md-input" id="uxPartner" type="text" placeholder="design-partner-1 / weekly review" />
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="uxJourney">Workflow</label>
+        <input class="md-input" id="uxJourney" type="text" value="` + journey + `" />
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="uxSummary">Observed friction</label>
+        <textarea class="md-input" id="uxSummary" rows="4" placeholder="Operators could not complete the workflow without API or runbook help."></textarea>
+      </div>
+    </div>
+    <div>
+      <div class="md-form-row">
+        <label class="md-label" for="uxImpact">Operator impact</label>
+        <textarea class="md-input" id="uxImpact" rows="4" placeholder="What slowed the operator down, what context was missing, and what outcome was blocked?"></textarea>
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="uxChange">Proposed change</label>
+        <textarea class="md-input" id="uxChange" rows="4" placeholder="Suggested UI, copy, or workflow change."></textarea>
+      </div>
+    </div>
+  </div>
+  <div class="md-button-row">
+    <a id="uxOpenTask" class="md-button" href="https://github.com/srmdn/maild/issues/new?template=task.yml" target="_blank" rel="noreferrer">Open Task Issue</a>
+    <a id="uxOpenFeature" class="md-button md-button-secondary" href="https://github.com/srmdn/maild/issues/new?template=feature_request.yml" target="_blank" rel="noreferrer">Open Feature Issue</a>
+    <button id="uxCopyDraft" class="md-button md-button-secondary" type="button">Copy Draft</button>
+  </div>
+  <p class="md-muted">Workspace <code>` + strconv.FormatInt(workspaceID, 10) + `</code> is included in the generated draft for traceability.</p>
+  <pre id="uxPreview" class="md-pre">Add session notes to generate an issue draft.</pre>
+</section>`
+}
+
+func uxValidationScript(defaultJourney string, workspaceID int64) string {
+	return `<script>
+(function() {
+  const partnerEl = document.getElementById('uxPartner');
+  const journeyEl = document.getElementById('uxJourney');
+  const summaryEl = document.getElementById('uxSummary');
+  const impactEl = document.getElementById('uxImpact');
+  const changeEl = document.getElementById('uxChange');
+  const previewEl = document.getElementById('uxPreview');
+  const openTaskEl = document.getElementById('uxOpenTask');
+  const openFeatureEl = document.getElementById('uxOpenFeature');
+  const copyDraftEl = document.getElementById('uxCopyDraft');
+  if (!partnerEl || !journeyEl || !summaryEl || !impactEl || !changeEl || !previewEl || !openTaskEl || !openFeatureEl || !copyDraftEl) {
+    return;
+  }
+
+  const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
+  const defaultJourney = ` + strconv.Quote(defaultJourney) + `;
+  const issueBase = 'https://github.com/srmdn/maild/issues/new';
+
+  function value(el, fallback) {
+    const raw = (el.value || '').trim();
+    return raw || fallback;
+  }
+
+  function issueDraft(kind) {
+    const partner = value(partnerEl, 'unassigned-session');
+    const journey = value(journeyEl, defaultJourney);
+    const summary = value(summaryEl, 'Describe the operator friction that was observed.');
+    const impact = value(impactEl, 'Document the effect on setup time, incident response time, or operator confidence.');
+    const change = value(changeEl, 'Describe the narrowest useful UX change.');
+    const titlePrefix = kind === 'task' ? 'task: ' : 'feat: ';
+    const title = titlePrefix + journey + ' feedback loop for workspace ' + workspaceId;
+    const context = '- Workspace: ' + workspaceId + '\n- Partner/session: ' + partner + '\n- Workflow: ' + journey;
+
+    if (kind === 'task') {
+      const pagePath = journey === 'dashboard' ? '/ui' : '/ui/' + journey;
+      const body =
+'### Expected outcome\n' +
+summary + '\n\n' +
+'### Scope\n' +
+'In scope:\n' +
+'- Review feedback from ' + partner + '\n' +
+'- Improve the ' + journey + ' operator workflow in /ui\n' +
+'- Preserve existing API behavior and demo-mode usability\n\n' +
+'Out of scope:\n' +
+'- New backend APIs unless the current UI cannot support the workflow\n' +
+'- Commercial changes outside operator UX\n\n' +
+'### Acceptance criteria\n' +
+'- [ ] The reported friction is reproducible and understood\n' +
+'- [ ] The ' + journey + ' workflow provides the next correct operator action\n' +
+'- [ ] Demo-mode usability remains intact where applicable\n' +
+'- [ ] QA/docs notes are updated if the workflow changed\n\n' +
+'### Verification plan\n' +
+'- Manual walkthrough for ' + pagePath + '?workspace_id=' + workspaceId + '\n' +
+'- go test ./...\n\n' +
+'### Session context\n' + context + '\n\n' +
+'### Operator impact\n' + impact + '\n\n' +
+'### Proposed change\n' + change;
+
+      return { title: title, template: 'task.yml', body: body };
+    }
+
+    const body =
+'### Problem Statement\n' +
+summary + '\n\n' +
+'### Proposed Solution\n' +
+change + '\n\n' +
+'### Alternatives Considered\n' +
+'- Keep the current ' + journey + ' workflow and rely on runbook/API guidance only\n' +
+'- Defer until broader design-partner feedback is collected\n\n' +
+'### Risk and Tradeoffs\n' +
+impact + '\n\n' +
+'### Session context\n' + context;
+
+    return { title: title, template: 'feature_request.yml', body: body };
+  }
+
+  function updatePreview() {
+    const task = issueDraft('task');
+    openTaskEl.href = issueBase + '?template=' + encodeURIComponent(task.template) + '&title=' + encodeURIComponent(task.title) + '&body=' + encodeURIComponent(task.body);
+
+    const feature = issueDraft('feature');
+    openFeatureEl.href = issueBase + '?template=' + encodeURIComponent(feature.template) + '&title=' + encodeURIComponent(feature.title) + '&body=' + encodeURIComponent(feature.body);
+
+    previewEl.textContent = task.title + '\n\n' + task.body;
+  }
+
+  async function copyDraft() {
+    updatePreview();
+    try {
+      await navigator.clipboard.writeText(previewEl.textContent);
+      copyDraftEl.textContent = 'Draft Copied';
+    } catch (_) {
+      copyDraftEl.textContent = 'Copy Failed';
+    }
+    window.setTimeout(() => {
+      copyDraftEl.textContent = 'Copy Draft';
+    }, 1200);
+  }
+
+  partnerEl.addEventListener('input', updatePreview);
+  journeyEl.addEventListener('input', updatePreview);
+  summaryEl.addEventListener('input', updatePreview);
+  impactEl.addEventListener('input', updatePreview);
+  changeEl.addEventListener('input', updatePreview);
+  copyDraftEl.addEventListener('click', copyDraft);
+  updatePreview();
+})();
+</script>`
 }

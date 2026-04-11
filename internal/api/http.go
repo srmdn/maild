@@ -21,6 +21,7 @@ import (
 type Handler struct {
 	messages               *service.MessageService
 	domains                *service.DomainService
+	appEnv                 string
 	apiKeyHeader           string
 	adminAPIKey            string
 	operatorAPIKey         string
@@ -34,6 +35,7 @@ type Handler struct {
 func NewHandler(
 	messages *service.MessageService,
 	domains *service.DomainService,
+	appEnv string,
 	apiKeyHeader, adminAPIKey, operatorAPIKey string,
 	webhooksEnabled bool,
 	webhookSignatureHeader, webhookTimestampHeader, webhookSigningSecret string,
@@ -43,6 +45,7 @@ func NewHandler(
 	return &Handler{
 		messages:               messages,
 		domains:                domains,
+		appEnv:                 strings.ToLower(strings.TrimSpace(appEnv)),
 		apiKeyHeader:           apiKeyHeader,
 		adminAPIKey:            adminAPIKey,
 		operatorAPIKey:         operatorAPIKey,
@@ -57,6 +60,12 @@ func NewHandler(
 func (h *Handler) Register(mux *http.ServeMux) {
 	withAPIKey := func(next http.HandlerFunc) http.HandlerFunc {
 		return auth.APIKeyMiddleware(h.apiKeyHeader, h.adminAPIKey, h.operatorAPIKey, next)
+	}
+	withUIAccess := func(next http.HandlerFunc) http.HandlerFunc {
+		if h.appEnv == "development" {
+			return next
+		}
+		return withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(next))
 	}
 
 	mux.HandleFunc(
@@ -137,23 +146,23 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	)
 	mux.HandleFunc(
 		"/ui/policy",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicyUI)),
+		withUIAccess(h.workspacePolicyUI),
 	)
 	mux.HandleFunc(
 		"/ui/logs",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogsUI)),
+		withUIAccess(h.messageLogsUI),
 	)
 	mux.HandleFunc(
 		"/ui",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.operatorDashboardUI)),
+		withUIAccess(h.operatorDashboardUI),
 	)
 	mux.HandleFunc(
 		"/ui/onboarding",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.onboardingUI)),
+		withUIAccess(h.onboardingUI),
 	)
 	mux.HandleFunc(
 		"/ui/incidents",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.incidentUI)),
+		withUIAccess(h.incidentUI),
 	)
 	if h.webhooksEnabled {
 		mux.HandleFunc("/v1/webhooks/events", h.receiveWebhookEvent)
@@ -994,28 +1003,115 @@ func (h *Handler) workspacePolicyUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	joined := strings.Join(policy.BlockedRecipientDomains, ", ")
-	html := `<!doctype html>
-<html><head><meta charset="utf-8"><title>maild policy</title>
-<style>body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:760px}code{background:#f2f2f2;padding:.1rem .3rem}input,textarea{width:100%;padding:.5rem;margin:.25rem 0 1rem}button{padding:.6rem 1rem}pre{background:#f8f8f8;padding:1rem;overflow:auto}</style>
-</head><body>
-<p><a href="/ui?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Dashboard</a> · <a href="/ui/logs?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Logs</a> · <a href="/ui/onboarding?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Onboarding</a> · <a href="/ui/incidents?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Incidents</a></p>
-<h1>Workspace Policy</h1>
-<p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
-<label>API Key (admin)</label>
-<input id="apiKey" type="text" placeholder="change-me-admin" />
-<form id="policyForm">
-<label>Workspace Hourly Limit</label>
-<input id="rateWorkspace" type="number" name="rate_limit_workspace_per_hour" value="` + strconv.Itoa(policy.RateLimitWorkspacePerHour) + `" />
-<label>Domain Hourly Limit</label>
-<input id="rateDomain" type="number" name="rate_limit_domain_per_hour" value="` + strconv.Itoa(policy.RateLimitDomainPerHour) + `" />
-<label>Blocked Recipient Domains (comma-separated)</label>
-<textarea id="blockedDomains" rows="4">` + joined + `</textarea>
-<button type="submit">Save Policy</button>
-</form>
-<p id="status"></p>
-<pre id="result"></pre>
-<script>
+	content := `<section class="md-panel md-hero">
+  <div class="md-kicker">Guardrails</div>
+  <h2>Workspace Policy</h2>
+  <p class="md-muted">Tune tenant-level sending safety without leaving the operator workspace. This screen keeps rate limits and blocked recipient domains in one place so policy changes stay deliberate.</p>
+</section>
+
+<section class="md-grid md-grid-3">
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Workspace Limit</span>
+    <strong id="workspaceLimitCard" class="md-stat-value">` + strconv.Itoa(policy.RateLimitWorkspacePerHour) + `</strong>
+    <p class="md-muted">messages per hour</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Domain Limit</span>
+    <strong id="domainLimitCard" class="md-stat-value">` + strconv.Itoa(policy.RateLimitDomainPerHour) + `</strong>
+    <p class="md-muted">messages per recipient domain per hour</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Blocked Domains</span>
+    <strong id="blockedCountCard" class="md-stat-value">` + strconv.Itoa(len(policy.BlockedRecipientDomains)) + `</strong>
+    <p class="md-muted">domains currently blocked by policy</p>
+  </article>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h2>Edit Policy</h2>
+    <p class="md-muted">Saving requires an admin key. In local development the page is open, but policy writes still remain admin-only.</p>
+    <div class="md-form-row">
+      <label class="md-label" for="apiKey">Admin API Key</label>
+      <input class="md-input" id="apiKey" type="text" placeholder="change-me-admin" />
+    </div>
+    <form id="policyForm">
+      <div class="md-grid md-grid-2">
+        <div class="md-form-row">
+          <label class="md-label" for="rateWorkspace">Workspace Hourly Limit</label>
+          <input class="md-input" id="rateWorkspace" type="number" min="1" name="rate_limit_workspace_per_hour" value="` + strconv.Itoa(policy.RateLimitWorkspacePerHour) + `" />
+        </div>
+        <div class="md-form-row">
+          <label class="md-label" for="rateDomain">Domain Hourly Limit</label>
+          <input class="md-input" id="rateDomain" type="number" min="1" name="rate_limit_domain_per_hour" value="` + strconv.Itoa(policy.RateLimitDomainPerHour) + `" />
+        </div>
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="blockedDomains">Blocked Recipient Domains</label>
+        <textarea class="md-input md-textarea" id="blockedDomains" rows="6" placeholder="mailinator.com, tempmail.com">` + joined + `</textarea>
+      </div>
+      <div class="md-button-row">
+        <button class="md-button" type="submit">Save Policy</button>
+        <button class="md-button md-button-secondary" id="resetPolicy" type="button">Reset Draft</button>
+      </div>
+    </form>
+  </article>
+  <article class="md-panel">
+    <h2>Policy Notes</h2>
+    <ul class="md-list">
+      <li>Workspace limit protects the tenant-wide send budget during spikes.</li>
+      <li>Domain limit protects downstream domains from bursty retries or bad targeting.</li>
+      <li>Blocked domains should be used for durable policy decisions, not one-off suppressions.</li>
+      <li>Use suppressions or unsubscribes in the logs console for recipient-level actions.</li>
+    </ul>
+    <div id="status" class="md-empty">No policy update submitted yet.</div>
+    <pre id="result" class="md-pre">Current policy snapshot will appear here after save.</pre>
+  </article>
+</section>
+
+` + uxValidationPanel(workspaceID, "policy") + ``
+	script := `<script>
+const initialPolicy = {
+  workspace_limit: ` + strconv.Itoa(policy.RateLimitWorkspacePerHour) + `,
+  domain_limit: ` + strconv.Itoa(policy.RateLimitDomainPerHour) + `,
+  blocked_domains: ` + strconv.Quote(joined) + `
+};
 const form = document.getElementById('policyForm');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const workspaceLimitCardEl = document.getElementById('workspaceLimitCard');
+const domainLimitCardEl = document.getElementById('domainLimitCard');
+const blockedCountCardEl = document.getElementById('blockedCountCard');
+
+function blockedDomainsList() {
+  return document.getElementById('blockedDomains').value
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function syncCards() {
+  const workspaceLimit = Number(document.getElementById('rateWorkspace').value || 0);
+  const domainLimit = Number(document.getElementById('rateDomain').value || 0);
+  workspaceLimitCardEl.textContent = String(workspaceLimit || 0);
+  domainLimitCardEl.textContent = String(domainLimit || 0);
+  blockedCountCardEl.textContent = String(blockedDomainsList().length);
+}
+
+function resetDraft() {
+  document.getElementById('rateWorkspace').value = String(initialPolicy.workspace_limit);
+  document.getElementById('rateDomain').value = String(initialPolicy.domain_limit);
+  document.getElementById('blockedDomains').value = initialPolicy.blocked_domains;
+  statusEl.textContent = 'Draft reset to the current policy values.';
+  resultEl.textContent = 'Current policy snapshot will appear here after save.';
+  syncCards();
+}
+
+document.getElementById('rateWorkspace').addEventListener('input', syncCards);
+document.getElementById('rateDomain').addEventListener('input', syncCards);
+document.getElementById('blockedDomains').addEventListener('input', syncCards);
+document.getElementById('resetPolicy').addEventListener('click', resetDraft);
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const apiKey = document.getElementById('apiKey').value.trim();
@@ -1023,19 +1119,22 @@ form.addEventListener('submit', async (e) => {
     workspace_id: ` + strconv.FormatInt(workspaceID, 10) + `,
     rate_limit_workspace_per_hour: Number(document.getElementById('rateWorkspace').value),
     rate_limit_domain_per_hour: Number(document.getElementById('rateDomain').value),
-    blocked_recipient_domains: document.getElementById('blockedDomains').value.split(',').map(v => v.trim()).filter(Boolean)
+    blocked_recipient_domains: blockedDomainsList()
   };
+  statusEl.textContent = 'Saving policy...';
   const res = await fetch('/v1/workspaces/policy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
     body: JSON.stringify(body)
   });
   const text = await res.text();
-  document.getElementById('status').textContent = 'HTTP ' + res.status;
-  document.getElementById('result').textContent = text;
+  statusEl.textContent = res.ok ? 'Policy saved. HTTP ' + res.status : 'Policy save failed. HTTP ' + res.status;
+  resultEl.textContent = text;
 });
-</script>
-</body></html>`
+
+syncCards();
+</script>` + uxValidationScript("policy", workspaceID)
+	html := uiShell("Workspace Policy", workspaceID, "policy", content, script)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))
@@ -1051,139 +1150,200 @@ func (h *Handler) messageLogsUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
 		return
 	}
-	html := `<!doctype html>
-<html><head><meta charset="utf-8"><title>maild logs</title>
-<style>
-body{font-family:ui-sans-serif,system-ui;margin:2rem;max-width:1200px}
-code{background:#f2f2f2;padding:.1rem .3rem}
-input,textarea{padding:.5rem;margin:.25rem .25rem .75rem 0}
-button{padding:.6rem 1rem;margin-right:.5rem}
-table{width:100%;border-collapse:collapse;margin-top:1rem}
-th,td{border-bottom:1px solid #ddd;padding:.5rem;text-align:left;vertical-align:top}
-tr:hover{background:#fafafa;cursor:pointer}
-pre{background:#f8f8f8;padding:1rem;overflow:auto}
-h1,h2{margin-top:1.6rem}
-.row{display:flex;gap:1rem;flex-wrap:wrap}
-.panel{flex:1 1 320px;border:1px solid #e9e9e9;padding:1rem;border-radius:.5rem;background:#fff}
-.stat{display:inline-block;margin-right:.8rem}
-.hint{color:#555;font-size:.92rem}
-</style>
-</head><body>
-<p><a href="/ui?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Dashboard</a> · <a href="/ui/onboarding?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Onboarding</a> · <a href="/ui/incidents?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Incidents</a> · <a href="/ui/policy?workspace_id=` + strconv.FormatInt(workspaceID, 10) + `">Policy</a></p>
-<h1>Operator Console</h1>
-<p>Workspace: <code>` + strconv.FormatInt(workspaceID, 10) + `</code></p>
-<label>API Key</label><br />
-<input id="apiKey" type="text" placeholder="change-me-operator" size="42" />
-<p id="activeFilter" class="hint"></p>
-<label>From (UTC)</label>
-<input id="rangeFrom" type="datetime-local" />
-<label>To (UTC)</label>
-<input id="rangeTo" type="datetime-local" />
-<button id="applyRange">Apply Range</button>
-<button id="clearRange">Clear Range</button>
-<div class="row">
-  <section class="panel">
-    <h2>Queue State</h2>
-    <label>Limit</label>
-    <input id="limit" type="number" value="50" min="1" max="500" />
-    <button id="refresh">Refresh Logs</button>
+	content := `<section class="md-panel md-hero">
+  <div class="md-kicker">Operator Workspace</div>
+  <h2>Logs and Timeline</h2>
+  <p class="md-muted">A calmer triage console for retries, dead-letter recovery, suppressions, and incident export. The layout is organized around operator decisions instead of raw endpoint access.</p>
+</section>
+
+<section class="md-panel">
+  <div class="md-section-head">
     <div>
-      <button id="filterFailed">Filter Failed</button>
-      <button id="filterSuppressed">Filter Suppressed</button>
-      <button id="clearMessageFilter">Clear Message Filter</button>
+      <h2>Session Controls</h2>
+      <p class="md-muted">Use an operator key for read and retry flows. Suppression, unsubscribe, and policy changes still require admin credentials at the API level.</p>
     </div>
-    <p id="queueSummary"></p>
-    <label>Selected Message ID</label>
-    <input id="selectedMessageId" type="number" placeholder="click a row" />
-    <button id="retrySelected">Retry Selected</button>
-    <button id="retryChecked">Retry Checked Rows</button>
-    <label>Bulk Message IDs (comma/newline)</label><br />
-    <textarea id="bulkMessageIds" rows="3" placeholder="101,102,103"></textarea>
-    <button id="retryBulkIds">Retry Bulk IDs</button>
-  </section>
-  <section class="panel">
-    <h2>Suppression Tools</h2>
-    <label>Email</label><br />
-    <input id="suppressionEmail" type="email" placeholder="user@example.com" size="34" />
-    <label>Reason</label><br />
-    <input id="suppressionReason" type="text" placeholder="manual" size="34" />
-    <div>
-      <button id="addSuppression">Add Suppression</button>
-      <button id="addUnsubscribe">Add Unsubscribe</button>
+    <span id="activeFilter" class="md-badge md-badge-neutral">Saved filter: none</span>
+  </div>
+  <div class="md-grid md-grid-3">
+    <div class="md-form-row">
+      <label class="md-label" for="apiKey">Operator API Key</label>
+      <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator" />
     </div>
-  </section>
-  <section class="panel">
-    <h2>Domain Health</h2>
-    <label>Domain</label><br />
-    <input id="domainName" type="text" placeholder="maild.click" size="26" />
-    <label>DKIM Selector</label><br />
-    <input id="dkimSelector" type="text" placeholder="default" size="26" />
-    <div>
-      <button id="checkDomain">Run Readiness Check</button>
+    <div class="md-form-row">
+      <label class="md-label" for="rangeFrom">From (UTC)</label>
+      <input class="md-input" id="rangeFrom" type="datetime-local" />
     </div>
-    <pre id="domainResult"></pre>
-  </section>
-  <section class="panel">
-    <h2>Onboarding Checklist</h2>
-    <label>Domain (optional)</label><br />
-    <input id="onboardingDomain" type="text" placeholder="maild.click" size="26" />
-    <label>DKIM Selector (optional)</label><br />
-    <input id="onboardingSelector" type="text" placeholder="default" size="26" />
-    <div>
-      <button id="loadOnboardingChecklist">Load Checklist</button>
+    <div class="md-form-row">
+      <label class="md-label" for="rangeTo">To (UTC)</label>
+      <input class="md-input" id="rangeTo" type="datetime-local" />
     </div>
-    <pre id="onboardingResult"></pre>
-  </section>
-  <section class="panel">
-    <h2>Webhook Dead Letters</h2>
-    <label>Limit</label>
-    <input id="webhookLimit" type="number" value="20" min="1" max="200" />
-    <button id="loadDeadLetters">Load Dead Letters</button>
-    <button id="filterDeadLetter">Filter Dead Letter</button>
-    <button id="clearWebhookFilter">Clear Webhook Filter</button>
-    <label>Replay Event ID</label><br />
-    <input id="webhookEventId" type="number" placeholder="optional single event id" />
-    <button id="replayDeadLetters">Replay</button>
-    <label>Bulk Event IDs (comma/newline)</label><br />
-    <textarea id="bulkWebhookIds" rows="3" placeholder="201,202,203"></textarea>
-    <button id="replayBulkIds">Replay Bulk IDs</button>
-    <pre id="webhookResult"></pre>
-  </section>
-  <section class="panel">
+  </div>
+  <div class="md-button-row">
+    <button class="md-button" id="applyRange" type="button">Apply Range</button>
+    <button class="md-button md-button-secondary" id="clearRange" type="button">Clear Range</button>
+  </div>
+</section>
+
+<section class="md-grid md-grid-5">
+  <article class="md-panel md-stat-card"><span class="md-kicker">Queued</span><strong id="queueQueued" class="md-stat-value">0</strong><p class="md-muted">awaiting worker send</p></article>
+  <article class="md-panel md-stat-card"><span class="md-kicker">Sending</span><strong id="queueSending" class="md-stat-value">0</strong><p class="md-muted">currently in flight</p></article>
+  <article class="md-panel md-stat-card"><span class="md-kicker">Sent</span><strong id="queueSent" class="md-stat-value">0</strong><p class="md-muted">delivered by SMTP path</p></article>
+  <article class="md-panel md-stat-card"><span class="md-kicker">Failed</span><strong id="queueFailed" class="md-stat-value">0</strong><p class="md-muted">need retry or incident review</p></article>
+  <article class="md-panel md-stat-card"><span class="md-kicker">Suppressed</span><strong id="queueSuppressed" class="md-stat-value">0</strong><p class="md-muted">blocked by safety controls</p></article>
+</section>
+
+<section class="md-grid md-grid-3">
+  <article class="md-panel">
+    <h2>Message Queue</h2>
+    <div class="md-form-row">
+      <label class="md-label" for="limit">Rows</label>
+      <input class="md-input" id="limit" type="number" value="50" min="1" max="500" />
+    </div>
+    <div class="md-button-row">
+      <button class="md-button" id="refresh" type="button">Refresh Logs</button>
+      <button class="md-button md-button-secondary" id="filterFailed" type="button">Failed Only</button>
+      <button class="md-button md-button-secondary" id="filterSuppressed" type="button">Suppressed Only</button>
+      <button class="md-button md-button-secondary" id="clearMessageFilter" type="button">Clear Filter</button>
+    </div>
+    <p id="queueSummary" class="md-muted">No queue snapshot loaded yet.</p>
+    <div class="md-form-row">
+      <label class="md-label" for="selectedMessageId">Selected Message ID</label>
+      <input class="md-input" id="selectedMessageId" type="number" placeholder="click a row" />
+    </div>
+    <div class="md-button-row">
+      <button class="md-button" id="retrySelected" type="button">Retry Selected</button>
+      <button class="md-button md-button-secondary" id="retryChecked" type="button">Retry Checked Rows</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="bulkMessageIds">Bulk Message IDs</label>
+      <textarea class="md-input md-textarea" id="bulkMessageIds" rows="4" placeholder="101,102,103"></textarea>
+    </div>
+    <button class="md-button md-button-secondary" id="retryBulkIds" type="button">Retry Bulk IDs</button>
+  </article>
+
+  <article class="md-panel">
+    <h2>Recipient Safety</h2>
+    <div class="md-form-row">
+      <label class="md-label" for="suppressionEmail">Recipient Email</label>
+      <input class="md-input" id="suppressionEmail" type="email" placeholder="user@example.com" />
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="suppressionReason">Reason</label>
+      <input class="md-input" id="suppressionReason" type="text" placeholder="manual" />
+    </div>
+    <div class="md-button-row">
+      <button class="md-button" id="addSuppression" type="button">Add Suppression</button>
+      <button class="md-button md-button-secondary" id="addUnsubscribe" type="button">Add Unsubscribe</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="domainName">Domain Readiness Check</label>
+      <input class="md-input" id="domainName" type="text" placeholder="maild.click" />
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="dkimSelector">DKIM Selector</label>
+      <input class="md-input" id="dkimSelector" type="text" placeholder="default" />
+    </div>
+    <button class="md-button md-button-secondary" id="checkDomain" type="button">Run Readiness Check</button>
+    <pre id="domainResult" class="md-pre md-pre-compact">No domain check run yet.</pre>
+  </article>
+
+  <article class="md-panel">
+    <h2>Recovery Toolkit</h2>
+    <div class="md-form-row">
+      <label class="md-label" for="webhookLimit">Dead-Letter Rows</label>
+      <input class="md-input" id="webhookLimit" type="number" value="20" min="1" max="200" />
+    </div>
+    <div class="md-button-row">
+      <button class="md-button" id="loadDeadLetters" type="button">Load Dead Letters</button>
+      <button class="md-button md-button-secondary" id="filterDeadLetter" type="button">Dead Letter Only</button>
+      <button class="md-button md-button-secondary" id="clearWebhookFilter" type="button">Clear Webhook Filter</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="webhookEventId">Replay Single Event ID</label>
+      <input class="md-input" id="webhookEventId" type="number" placeholder="optional single event id" />
+    </div>
+    <button class="md-button md-button-secondary" id="replayDeadLetters" type="button">Replay Event</button>
+    <div class="md-form-row">
+      <label class="md-label" for="bulkWebhookIds">Replay Bulk Event IDs</label>
+      <textarea class="md-input md-textarea" id="bulkWebhookIds" rows="4" placeholder="201,202,203"></textarea>
+    </div>
+    <button class="md-button md-button-secondary" id="replayBulkIds" type="button">Replay Bulk IDs</button>
+    <pre id="webhookResult" class="md-pre md-pre-compact">No dead-letter payload loaded yet.</pre>
+  </article>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h2>Onboarding Snapshot</h2>
+    <div class="md-grid md-grid-2">
+      <div class="md-form-row">
+        <label class="md-label" for="onboardingDomain">Domain (optional)</label>
+        <input class="md-input" id="onboardingDomain" type="text" placeholder="maild.click" />
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="onboardingSelector">DKIM Selector (optional)</label>
+        <input class="md-input" id="onboardingSelector" type="text" placeholder="default" />
+      </div>
+    </div>
+    <button class="md-button" id="loadOnboardingChecklist" type="button">Load Checklist</button>
+    <pre id="onboardingResult" class="md-pre md-pre-compact">No onboarding checklist loaded yet.</pre>
+  </article>
+  <article class="md-panel">
     <h2>Incident Bundle</h2>
-    <label>Message ID</label><br />
-    <input id="incidentMessageId" type="number" placeholder="click a row or enter id" />
-    <div>
-      <button id="exportIncidentBundle">Export Incident Bundle</button>
+    <div class="md-form-row">
+      <label class="md-label" for="incidentMessageId">Message ID</label>
+      <input class="md-input" id="incidentMessageId" type="number" placeholder="click a row or enter id" />
     </div>
-    <pre id="incidentBundleResult"></pre>
-  </section>
-</div>
-<p id="status"></p>
-<h2>Message Logs</h2>
-<table>
-  <thead>
-    <tr>
-      <th>Select</th>
-      <th>ID</th>
-      <th>To</th>
-      <th>Subject</th>
-      <th>Status</th>
-      <th>Created</th>
-      <th>Updated</th>
-    </tr>
-  </thead>
-  <tbody id="rows"></tbody>
-</table>
-<h2>Timeline</h2>
-<pre id="timeline">Select a row to view attempts.</pre>
-<script>
+    <button class="md-button" id="exportIncidentBundle" type="button">Export Incident Bundle</button>
+    <pre id="incidentBundleResult" class="md-pre md-pre-compact">No incident bundle loaded yet.</pre>
+  </article>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <div class="md-section-head">
+      <div>
+        <h2>Message Logs</h2>
+        <p class="md-muted">Click a row to load the per-message timeline. Check rows to prepare retry batches.</p>
+      </div>
+      <div id="status" class="md-badge md-badge-neutral">Idle</div>
+    </div>
+    <div class="md-table-wrap">
+      <table class="md-table md-table-logs">
+        <thead>
+          <tr>
+            <th>Select</th>
+            <th>ID</th>
+            <th>Recipient</th>
+            <th>Subject</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </article>
+  <article class="md-panel">
+    <h2>Timeline Detail</h2>
+    <pre id="timeline" class="md-pre">Select a row to view attempts.</pre>
+  </article>
+</section>
+
+` + uxValidationPanel(workspaceID, "logs") + ``
+	script := `<script>
 const workspaceId = ` + strconv.FormatInt(workspaceID, 10) + `;
 const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('rows');
 const timelineEl = document.getElementById('timeline');
 const selectedIdEl = document.getElementById('selectedMessageId');
 const queueSummaryEl = document.getElementById('queueSummary');
+const queueQueuedEl = document.getElementById('queueQueued');
+const queueSendingEl = document.getElementById('queueSending');
+const queueSentEl = document.getElementById('queueSent');
+const queueFailedEl = document.getElementById('queueFailed');
+const queueSuppressedEl = document.getElementById('queueSuppressed');
 const domainResultEl = document.getElementById('domainResult');
 const webhookResultEl = document.getElementById('webhookResult');
 const onboardingResultEl = document.getElementById('onboardingResult');
@@ -1264,12 +1424,24 @@ function summarizeQueue(messages) {
     else if (m.status === 'failed') failed++;
     else if (m.status === 'suppressed') suppressed++;
   }
-  queueSummaryEl.innerHTML =
-    '<span class="stat">queued: <code>' + queued + '</code></span>' +
-    '<span class="stat">sending: <code>' + sending + '</code></span>' +
-    '<span class="stat">sent: <code>' + sent + '</code></span>' +
-    '<span class="stat">failed: <code>' + failed + '</code></span>' +
-    '<span class="stat">suppressed: <code>' + suppressed + '</code></span>';
+  queueQueuedEl.textContent = String(queued);
+  queueSendingEl.textContent = String(sending);
+  queueSentEl.textContent = String(sent);
+  queueFailedEl.textContent = String(failed);
+  queueSuppressedEl.textContent = String(suppressed);
+  queueSummaryEl.textContent = 'Snapshot: ' + (messages || []).length + ' messages in range.';
+}
+
+function statusBadge(kind, label) {
+  const map = {
+    queued: 'md-badge-neutral',
+    sending: 'md-badge-neutral',
+    sent: 'md-badge-ok',
+    failed: 'md-badge-danger',
+    suppressed: 'md-badge-warn'
+  };
+  const cls = map[kind] || 'md-badge-neutral';
+  return '<span class="md-badge ' + cls + '">' + label + '</span>';
 }
 
 function parseIDList(raw) {
@@ -1294,7 +1466,7 @@ async function loadLogs() {
   const res = await fetch(url, {
     headers: readHeaders(),
   });
-  statusEl.textContent = 'Logs HTTP ' + res.status;
+  statusEl.textContent = 'Logs ' + res.status;
   if (!res.ok) {
     rowsEl.innerHTML = '';
     timelineEl.textContent = await res.text();
@@ -1313,7 +1485,7 @@ async function loadLogs() {
       '<td>' + m.id + '</td>' +
       '<td>' + m.to_email + '</td>' +
       '<td>' + m.subject + '</td>' +
-      '<td>' + m.status + '</td>' +
+      '<td>' + statusBadge(m.status, m.status) + '</td>' +
       '<td>' + m.created_at + '</td>' +
       '<td>' + m.updated_at + '</td>';
     tr.addEventListener('click', (e) => {
@@ -1345,6 +1517,7 @@ async function loadTimeline(messageId) {
   }
   const data = await res.json();
   timelineEl.textContent = JSON.stringify(data, null, 2);
+  statusEl.textContent = 'Timeline loaded';
 }
 
 async function retryMessageIDs(ids) {
@@ -1360,7 +1533,7 @@ async function retryMessageIDs(ids) {
       message_ids: ids
     }),
   });
-  statusEl.textContent = 'Retry HTTP ' + res.status;
+  statusEl.textContent = 'Retry ' + res.status;
   timelineEl.textContent = await res.text();
 }
 
@@ -1400,7 +1573,7 @@ async function loadWebhookLogs() {
   const res = await fetch('/v1/webhooks/logs?workspace_id=' + workspaceId + '&limit=' + limit + status + range, {
     headers: readHeaders(),
   });
-  statusEl.textContent = 'Webhook logs HTTP ' + res.status;
+  statusEl.textContent = 'Webhook logs ' + res.status;
   webhookResultEl.textContent = await res.text();
 }
 
@@ -1416,7 +1589,7 @@ document.getElementById('addSuppression').addEventListener('click', async () => 
     email,
     reason,
   });
-  statusEl.textContent = 'Suppression HTTP ' + res.status;
+  statusEl.textContent = 'Suppression ' + res.status;
   timelineEl.textContent = await res.text();
 });
 
@@ -1432,7 +1605,7 @@ document.getElementById('addUnsubscribe').addEventListener('click', async () => 
     email,
     reason,
   });
-  statusEl.textContent = 'Unsubscribe HTTP ' + res.status;
+  statusEl.textContent = 'Unsubscribe ' + res.status;
   timelineEl.textContent = await res.text();
 });
 
@@ -1448,7 +1621,7 @@ document.getElementById('checkDomain').addEventListener('click', async () => {
     domain,
     dkim_selector: dkimSelector,
   });
-  statusEl.textContent = 'Domain readiness HTTP ' + res.status;
+  statusEl.textContent = 'Domain readiness ' + res.status;
   domainResultEl.textContent = await res.text();
 });
 
@@ -1465,7 +1638,7 @@ document.getElementById('loadOnboardingChecklist').addEventListener('click', asy
   const res = await fetch(url, {
     headers: readHeaders(),
   });
-  statusEl.textContent = 'Onboarding checklist HTTP ' + res.status;
+  statusEl.textContent = 'Onboarding checklist ' + res.status;
   onboardingResultEl.textContent = await res.text();
 });
 
@@ -1482,7 +1655,7 @@ document.getElementById('replayDeadLetters').addEventListener('click', async () 
     payload.event_ids = [eventID];
   }
   const res = await postJSON('/v1/webhooks/replay', payload);
-  statusEl.textContent = 'Webhook replay HTTP ' + res.status;
+  statusEl.textContent = 'Webhook replay ' + res.status;
   webhookResultEl.textContent = await res.text();
 });
 
@@ -1496,7 +1669,7 @@ document.getElementById('replayBulkIds').addEventListener('click', async () => {
     workspace_id: workspaceId,
     event_ids: ids,
   });
-  statusEl.textContent = 'Webhook replay HTTP ' + res.status;
+  statusEl.textContent = 'Webhook replay ' + res.status;
   webhookResultEl.textContent = await res.text();
 });
 
@@ -1509,7 +1682,7 @@ document.getElementById('exportIncidentBundle').addEventListener('click', async 
   const res = await fetch('/v1/incidents/bundle?workspace_id=' + workspaceId + '&message_id=' + messageId, {
     headers: readHeaders(),
   });
-  statusEl.textContent = 'Incident bundle HTTP ' + res.status;
+  statusEl.textContent = 'Incident bundle ' + res.status;
   incidentBundleResultEl.textContent = await res.text();
 });
 
@@ -1568,8 +1741,10 @@ document.getElementById('rangeFrom').value = localDateTimeValueFromRFC3339(saved
 document.getElementById('rangeTo').value = localDateTimeValueFromRFC3339(savedFilter.to);
 updateActiveFilterLabel();
 document.getElementById('incidentMessageId').value = selectedIdEl.value;
-</script>
-</body></html>`
+loadLogs();
+loadWebhookLogs();
+</script>` + uxValidationScript("logs", workspaceID)
+	html := uiShell("Operator Console", workspaceID, "logs", content, script)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))

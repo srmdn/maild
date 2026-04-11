@@ -81,6 +81,7 @@ func Run() error {
 	apiHandler := api.NewHandler(
 		messageService,
 		domainService,
+		cfg.AppEnv,
 		cfg.APIKeyHeader,
 		cfg.AdminAPIKey,
 		cfg.OperatorAPIKey,
