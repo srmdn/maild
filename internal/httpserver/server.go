@@ -35,7 +35,7 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 		} else {
 			logger.Info("templates loaded successfully")
 		}
-		static, err := fs.Sub(staticFS, "web/static")
+		static, err := fs.Sub(staticFS, "static")
 		if err == nil {
 			mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 		}
