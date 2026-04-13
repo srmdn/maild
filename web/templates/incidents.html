@@ -1,0 +1,160 @@
+{{define "title"}}Incidents{{end}}
+
+{{define "content"}}
+<section class="md-panel md-panel--hero">
+  <div class="md-kicker">Incident Response</div>
+  <h2>Incident Bundle Export</h2>
+  <p class="md-muted">Export by message ID, or use demo data to validate UI flow without API calls.</p>
+</section>
+
+<section class="md-panel">
+  <h3>Session Controls</h3>
+  <div class="md-form-row">
+    <label class="md-label" for="apiKey">API Key</label>
+    <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
+  </div>
+  <div class="md-grid md-grid-2">
+    <div class="md-form-row">
+      <label class="md-label" for="messageId">Message ID</label>
+      <input class="md-input" id="messageId" type="number" min="1" placeholder="101">
+    </div>
+    <div class="md-inline-actions">
+      <button id="exportBundle" class="md-button md-button--primary">Export From API</button>
+      <button id="loadDemo" class="md-button">Use Demo Incident</button>
+    </div>
+  </div>
+  <p id="status" class="md-muted">No incident loaded.</p>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h3>Timeline</h3>
+    <div id="timelineEmpty" class="md-empty">No incident context yet.</div>
+    <ol id="timeline" class="md-timeline" hidden></ol>
+  </article>
+  <article class="md-panel">
+    <h3>Bundle JSON</h3>
+    <div id="errorState" class="md-error" hidden></div>
+    <pre id="json" class="md-pre">{}</pre>
+    <a id="download" class="md-button" hidden download>Download JSON</a>
+  </article>
+</section>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const workspaceId = {{.WorkspaceID}};
+const timelineEl = document.getElementById('timeline');
+const timelineEmptyEl = document.getElementById('timelineEmpty');
+const statusEl = document.getElementById('status');
+const jsonEl = document.getElementById('json');
+const errorStateEl = document.getElementById('errorState');
+const downloadEl = document.getElementById('download');
+
+function headers() {
+  const key = document.getElementById('apiKey').value.trim();
+  return key ? { 'X-API-Key': key } : {};
+}
+
+function setLoading(message) {
+  statusEl.textContent = message;
+  errorStateEl.hidden = true;
+  timelineEl.hidden = true;
+  timelineEmptyEl.hidden = false;
+  timelineEmptyEl.textContent = 'Loading incident bundle...';
+}
+
+function setError(message) {
+  statusEl.textContent = message;
+  errorStateEl.hidden = false;
+  errorStateEl.textContent = message;
+}
+
+function renderTimeline(bundle) {
+  timelineEl.innerHTML = '';
+  const message = bundle.message || {};
+  const attempts = Array.isArray(bundle.attempts) ? bundle.attempts : [];
+  const webhooks = Array.isArray(bundle.webhook_events) ? bundle.webhook_events : [];
+
+  const top = document.createElement('li');
+  top.innerHTML = '<strong>Message</strong><span>' + (message.id || 'n/a') + ' &middot; ' + (message.status || 'unknown') + '</span>';
+  timelineEl.appendChild(top);
+
+  for (const a of attempts) {
+    const li = document.createElement('li');
+    li.innerHTML = '<strong>Attempt #' + (a.attempt_number || '?') + '</strong><span>' + (a.status || 'unknown') + ' &middot; ' + (a.provider || 'n/a') + '</span>';
+    timelineEl.appendChild(li);
+  }
+
+  for (const e of webhooks) {
+    const li = document.createElement('li');
+    li.innerHTML = '<strong>Webhook</strong><span>' + (e.type || 'unknown') + ' &middot; ' + (e.status || 'unknown') + '</span>';
+    timelineEl.appendChild(li);
+  }
+
+  timelineEmptyEl.hidden = true;
+  timelineEl.hidden = false;
+}
+
+function attachDownload(bundle, messageId) {
+  const body = JSON.stringify(bundle, null, 2);
+  jsonEl.textContent = body;
+  const blob = new Blob([body], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  downloadEl.href = url;
+  downloadEl.download = 'maild_incident_bundle_message_' + messageId + '.json';
+  downloadEl.hidden = false;
+}
+
+function demoBundle() {
+  return {
+    message: {
+      id: 101,
+      workspace_id: workspaceId,
+      to_email: 'ops@example.com',
+      subject: 'Welcome',
+      status: 'failed'
+    },
+    attempts: [
+      { attempt_number: 1, status: 'failed', provider: 'smtp-primary' },
+      { attempt_number: 2, status: 'failed', provider: 'smtp-secondary' }
+    ],
+    webhook_events: [
+      { type: 'bounce', status: 'processed' },
+      { type: 'complaint', status: 'dead_letter' }
+    ]
+  };
+}
+
+async function exportFromAPI() {
+  const messageId = Number(document.getElementById('messageId').value || 0);
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    setError('Message ID is required.');
+    return;
+  }
+
+  setLoading('Loading incident bundle from API...');
+  const res = await fetch('/v1/incidents/bundle?workspace_id=' + workspaceId + '&message_id=' + messageId, {
+    headers: headers()
+  });
+  if (!res.ok) {
+    setError('Incident bundle HTTP ' + res.status + ': ' + await res.text());
+    return;
+  }
+
+  const bundle = await res.json();
+  statusEl.textContent = 'Incident bundle loaded from API.';
+  renderTimeline(bundle);
+  attachDownload(bundle, messageId);
+}
+
+document.getElementById('exportBundle').addEventListener('click', exportFromAPI);
+document.getElementById('loadDemo').addEventListener('click', () => {
+  const bundle = demoBundle();
+  statusEl.textContent = 'Demo incident loaded (no API call).';
+  errorStateEl.hidden = true;
+  renderTimeline(bundle);
+  attachDownload(bundle, bundle.message.id || 'demo');
+});
+</script>
+{{end}}

@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,11 +15,12 @@ import (
 )
 
 type Server struct {
-	http *http.Server
-	deps *runtime.DependencyState
+	http   *http.Server
+	deps   *runtime.DependencyState
+	static http.Handler
 }
 
-func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, apiHandler *api.Handler) *Server {
+func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, apiHandler *api.Handler, staticFS fs.FS) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/healthz", handleHealth)
@@ -26,6 +28,18 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 		handleReady(w, r, deps)
 	})
 	apiHandler.Register(mux)
+
+	if staticFS != nil {
+		if err := api.LoadTemplates(staticFS); err != nil {
+			logger.Warn("template loading failed", "err", err)
+		} else {
+			logger.Info("templates loaded successfully")
+		}
+		static, err := fs.Sub(staticFS, "web/static")
+		if err == nil {
+			mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+		}
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

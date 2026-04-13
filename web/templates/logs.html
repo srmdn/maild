@@ -1,0 +1,356 @@
+{{define "title"}}Logs{{end}}
+
+{{define "content"}}
+<section class="md-panel md-panel--hero">
+  <div class="md-kicker">Operator Workspace</div>
+  <h2>Logs and Timeline</h2>
+  <p class="md-muted">A calmer triage console for retries, dead-letter recovery, suppressions, and incident export.</p>
+</section>
+
+<section class="md-panel">
+  <h3>Session Controls</h3>
+  <div class="md-grid md-grid-3">
+    <div class="md-form-row">
+      <label class="md-label" for="apiKey">Operator API Key</label>
+      <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="rangeFrom">From (UTC)</label>
+      <input class="md-input" id="rangeFrom" type="datetime-local">
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="rangeTo">To (UTC)</label>
+      <input class="md-input" id="rangeTo" type="datetime-local">
+    </div>
+  </div>
+  <div class="md-button-row">
+    <button class="md-button md-button--primary" id="applyRange" type="button">Apply Range</button>
+    <button class="md-button" id="clearRange" type="button">Clear Range</button>
+  </div>
+</section>
+
+<section class="md-grid md-grid-5">
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Queued</span>
+    <strong id="queueQueued" class="md-stat-value">0</strong>
+    <p class="md-muted">awaiting worker send</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Sending</span>
+    <strong id="queueSending" class="md-stat-value">0</strong>
+    <p class="md-muted">currently in flight</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Sent</span>
+    <strong id="queueSent" class="md-stat-value">0</strong>
+    <p class="md-muted">delivered by SMTP path</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Failed</span>
+    <strong id="queueFailed" class="md-stat-value">0</strong>
+    <p class="md-muted">need retry or incident review</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Suppressed</span>
+    <strong id="queueSuppressed" class="md-stat-value">0</strong>
+    <p class="md-muted">blocked by safety controls</p>
+  </article>
+</section>
+
+<section class="md-grid md-grid-3">
+  <article class="md-panel">
+    <h3>Message Queue</h3>
+    <div class="md-form-row">
+      <label class="md-label" for="limit">Rows</label>
+      <input class="md-input" id="limit" type="number" value="50" min="1" max="500">
+    </div>
+    <div class="md-button-row">
+      <button class="md-button md-button--primary" id="refresh" type="button">Refresh Logs</button>
+      <button class="md-button" id="filterFailed" type="button">Failed Only</button>
+      <button class="md-button" id="filterSuppressed" type="button">Suppressed Only</button>
+      <button class="md-button" id="clearMessageFilter" type="button">Clear Filter</button>
+    </div>
+    <p id="queueSummary" class="md-muted">No queue snapshot loaded yet.</p>
+    <div class="md-form-row">
+      <label class="md-label" for="selectedMessageId">Selected Message ID</label>
+      <input class="md-input" id="selectedMessageId" type="number" placeholder="click a row">
+    </div>
+    <div class="md-button-row">
+      <button class="md-button" id="retrySelected" type="button">Retry Selected</button>
+      <button class="md-button" id="retryChecked" type="button">Retry Checked Rows</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="bulkMessageIds">Bulk Message IDs</label>
+      <textarea class="md-input md-textarea" id="bulkMessageIds" rows="4" placeholder="101,102,103"></textarea>
+    </div>
+    <button class="md-button" id="retryBulkIds" type="button">Retry Bulk IDs</button>
+  </article>
+
+  <article class="md-panel">
+    <h3>Recipient Safety</h3>
+    <div class="md-form-row">
+      <label class="md-label" for="suppressionEmail">Recipient Email</label>
+      <input class="md-input" id="suppressionEmail" type="email" placeholder="user@example.com">
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="suppressionReason">Reason</label>
+      <input class="md-input" id="suppressionReason" type="text" placeholder="manual">
+    </div>
+    <div class="md-button-row">
+      <button class="md-button md-button--primary" id="addSuppression" type="button">Add Suppression</button>
+      <button class="md-button" id="addUnsubscribe" type="button">Add Unsubscribe</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="domainName">Domain Readiness Check</label>
+      <input class="md-input" id="domainName" type="text" placeholder="maild.click">
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="dkimSelector">DKIM Selector</label>
+      <input class="md-input" id="dkimSelector" type="text" placeholder="default">
+    </div>
+    <button class="md-button" id="checkDomain" type="button">Run Readiness Check</button>
+    <pre id="domainResult" class="md-pre md-pre--compact">No domain check run yet.</pre>
+  </article>
+
+  <article class="md-panel">
+    <h3>Recovery Toolkit</h3>
+    <div class="md-form-row">
+      <label class="md-label" for="webhookLimit">Dead-Letter Rows</label>
+      <input class="md-input" id="webhookLimit" type="number" value="20" min="1" max="200">
+    </div>
+    <div class="md-button-row">
+      <button class="md-button md-button--primary" id="loadDeadLetters" type="button">Load Dead Letters</button>
+      <button class="md-button" id="filterDeadLetter" type="button">Dead Letter Only</button>
+      <button class="md-button" id="clearWebhookFilter" type="button">Clear Webhook Filter</button>
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="webhookEventId">Replay Single Event ID</label>
+      <input class="md-input" id="webhookEventId" type="number" placeholder="optional single event id">
+    </div>
+    <button class="md-button" id="replayDeadLetters" type="button">Replay Event</button>
+    <div class="md-form-row">
+      <label class="md-label" for="bulkWebhookIds">Replay Bulk Event IDs</label>
+      <textarea class="md-input md-textarea" id="bulkWebhookIds" rows="4" placeholder="201,202,203"></textarea>
+    </div>
+    <button class="md-button" id="replayBulkIds" type="button">Replay Bulk IDs</button>
+    <pre id="webhookResult" class="md-pre md-pre--compact">No dead-letter payload loaded yet.</pre>
+  </article>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h3>Onboarding Snapshot</h3>
+    <div class="md-grid md-grid-2">
+      <div class="md-form-row">
+        <label class="md-label" for="onboardingDomain">Domain (optional)</label>
+        <input class="md-input" id="onboardingDomain" type="text" placeholder="maild.click">
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="onboardingSelector">DKIM Selector (optional)</label>
+        <input class="md-input" id="onboardingSelector" type="text" placeholder="default">
+      </div>
+    </div>
+    <button class="md-button md-button--primary" id="loadOnboardingChecklist" type="button">Load Checklist</button>
+    <pre id="onboardingResult" class="md-pre md-pre--compact">No onboarding checklist loaded yet.</pre>
+  </article>
+  <article class="md-panel">
+    <h3>Incident Bundle</h3>
+    <div class="md-form-row">
+      <label class="md-label" for="incidentMessageId">Message ID</label>
+      <input class="md-input" id="incidentMessageId" type="number" placeholder="click a row or enter id">
+    </div>
+    <button class="md-button md-button--primary" id="exportIncidentBundle" type="button">Export Incident Bundle</button>
+    <pre id="incidentBundleResult" class="md-pre md-pre--compact">No incident bundle loaded yet.</pre>
+  </article>
+</section>
+
+<section class="md-panel">
+  <div class="md-section-head">
+    <div>
+      <h3>Message Logs</h3>
+      <p class="md-muted">Click a row to load the per-message timeline. Check rows to prepare retry batches.</p>
+    </div>
+    <div id="status" class="md-badge md-badge--neutral">Idle</div>
+  </div>
+  <div class="md-table-wrap">
+    <table class="md-table md-table--logs">
+      <thead>
+        <tr>
+          <th>Select</th>
+          <th>ID</th>
+          <th>Recipient</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody id="messageRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="md-panel">
+  <h3>Timeline Detail</h3>
+  <pre id="timeline" class="md-pre">Select a row to view attempts.</pre>
+</section>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const workspaceId = {{.WorkspaceID}};
+const statusEl = document.getElementById('status');
+const messageRowsEl = document.getElementById('messageRows');
+const timelineEl = document.getElementById('timeline');
+const selectedIdEl = document.getElementById('selectedMessageId');
+const queueSummaryEl = document.getElementById('queueSummary');
+const queueQueuedEl = document.getElementById('queueQueued');
+const queueSendingEl = document.getElementById('queueSending');
+const queueSentEl = document.getElementById('queueSent');
+const queueFailedEl = document.getElementById('queueFailed');
+const queueSuppressedEl = document.getElementById('queueSuppressed');
+const domainResultEl = document.getElementById('domainResult');
+const webhookResultEl = document.getElementById('webhookResult');
+const onboardingResultEl = document.getElementById('onboardingResult');
+const incidentBundleResultEl = document.getElementById('incidentBundleResult');
+let savedFilter = { message_status: '', webhook_status: '', from: '', to: '' };
+const selectedMessageIDs = new Set();
+
+function readHeaders() {
+  const key = document.getElementById('apiKey').value.trim();
+  return key ? { 'X-API-Key': key } : {};
+}
+
+function localDateTimeValueFromRFC3339(raw) {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return y + '-' + m + '-' + day + 'T' + h + ':' + min;
+}
+
+function rfc3339FromLocalDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString();
+}
+
+function summarizeQueue(messages) {
+  let queued = 0, sending = 0, sent = 0, failed = 0, suppressed = 0;
+  for (const m of messages || []) {
+    if (m.status === 'queued') queued++;
+    else if (m.status === 'sending') sending++;
+    else if (m.status === 'sent') sent++;
+    else if (m.status === 'failed') failed++;
+    else if (m.status === 'suppressed') suppressed++;
+  }
+  queueQueuedEl.textContent = String(queued);
+  queueSendingEl.textContent = String(sending);
+  queueSentEl.textContent = String(sent);
+  queueFailedEl.textContent = String(failed);
+  queueSuppressedEl.textContent = String(suppressed);
+  queueSummaryEl.textContent = 'Snapshot: ' + (messages || []).length + ' messages in range.';
+}
+
+function statusBadge(kind, label) {
+  const map = {
+    queued: 'md-badge--neutral',
+    sending: 'md-badge--neutral',
+    sent: 'md-badge--ok',
+    failed: 'md-badge--danger',
+    suppressed: 'md-badge--warn'
+  };
+  const cls = map[kind] || 'md-badge--neutral';
+  return '<span class="md-badge ' + cls + '">' + label + '</span>';
+}
+
+function formatTime(raw) {
+  if (!raw) return 'n/a';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString();
+}
+
+function renderMessages(messages) {
+  messageRowsEl.innerHTML = '';
+  for (const m of messages || []) {
+    const tr = document.createElement('tr');
+    const checked = selectedMessageIDs.has(m.id) ? 'checked' : '';
+    tr.innerHTML =
+      '<td><input type="checkbox" class="msg-check" data-id="' + m.id + '" ' + checked + '></td>' +
+      '<td>' + m.id + '</td>' +
+      '<td>' + (m.to_email || 'n/a') + '</td>' +
+      '<td>' + (m.subject || 'n/a') + '</td>' +
+      '<td>' + statusBadge(m.status, m.status) + '</td>' +
+      '<td>' + formatTime(m.created_at) + '</td>' +
+      '<td>' + formatTime(m.updated_at) + '</td>';
+    tr.addEventListener('click', (e) => {
+      if (e.target.classList.contains('msg-check')) return;
+      selectedIdEl.value = m.id;
+      loadTimeline(m.id);
+    });
+    messageRowsEl.appendChild(tr);
+  }
+}
+
+async function loadMessages(filter) {
+  statusEl.textContent = 'Loading...';
+  statusEl.className = 'md-badge md-badge--warn';
+  let url = '/v1/messages/logs?workspace_id=' + workspaceId + '&limit=' + (document.getElementById('limit').value || 50);
+  if (filter && filter.from) url += '&from=' + encodeURIComponent(filter.from);
+  if (filter && filter.to) url += '&to=' + encodeURIComponent(filter.to);
+  const res = await fetch(url, { headers: readHeaders() });
+  if (!res.ok) {
+    statusEl.textContent = 'Error';
+    statusEl.className = 'md-badge md-badge--danger';
+    return;
+  }
+  const data = await res.json();
+  renderMessages(data.messages || []);
+  summarizeQueue(data.messages || []);
+  statusEl.textContent = 'Loaded ' + (data.messages || []).length;
+  statusEl.className = 'md-badge md-badge--ok';
+}
+
+async function loadTimeline(messageId) {
+  const res = await fetch('/v1/messages/timeline?message_id=' + messageId, { headers: readHeaders() });
+  if (!res.ok) {
+    timelineEl.textContent = 'Timeline load failed: HTTP ' + res.status;
+    return;
+  }
+  const data = await res.json();
+  timelineEl.textContent = JSON.stringify(data, null, 2);
+}
+
+document.getElementById('refresh').addEventListener('click', () => loadMessages(savedFilter));
+document.getElementById('filterFailed').addEventListener('click', () => loadMessages({ ...savedFilter, message_status: 'failed' }));
+document.getElementById('filterSuppressed').addEventListener('click', () => loadMessages({ ...savedFilter, message_status: 'suppressed' }));
+document.getElementById('clearMessageFilter').addEventListener('click', () => loadMessages({ from: '', to: '' }));
+document.getElementById('applyRange').addEventListener('click', () => {
+  const from = rfc3339FromLocalDateTime(document.getElementById('rangeFrom').value);
+  const to = rfc3339FromLocalDateTime(document.getElementById('rangeTo').value);
+  loadMessages({ from, to });
+});
+document.getElementById('clearRange').addEventListener('click', () => {
+  document.getElementById('rangeFrom').value = '';
+  document.getElementById('rangeTo').value = '';
+  loadMessages({ from: '', to: '' });
+});
+
+// Event listeners for checks
+messageRowsEl.addEventListener('change', (e) => {
+  if (e.target.classList.contains('msg-check')) {
+    const id = parseInt(e.target.dataset.id);
+    if (e.target.checked) selectedMessageIDs.add(id);
+    else selectedMessageIDs.delete(id);
+  }
+});
+
+loadMessages({ from: '', to: '' });
+</script>
+{{end}}

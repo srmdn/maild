@@ -1,0 +1,136 @@
+{{define "title"}}Policy{{end}}
+
+{{define "content"}}
+<section class="md-panel md-panel--hero">
+  <div class="md-kicker">Guardrails</div>
+  <h2>Workspace Policy</h2>
+  <p class="md-muted">Tune tenant-level sending safety without leaving the operator workspace.</p>
+</section>
+
+<section class="md-grid md-grid-3">
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Workspace Limit</span>
+    <strong id="workspaceLimitCard" class="md-stat-value">{{.Policy.RateLimitWorkspacePerHour}}</strong>
+    <p class="md-muted">messages per hour</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Domain Limit</span>
+    <strong id="domainLimitCard" class="md-stat-value">{{.Policy.RateLimitDomainPerHour}}</strong>
+    <p class="md-muted">messages per recipient domain per hour</p>
+  </article>
+  <article class="md-panel md-stat-card">
+    <span class="md-kicker">Blocked Domains</span>
+    <strong id="blockedCountCard" class="md-stat-value">{{len .Policy.BlockedRecipientDomains}}</strong>
+    <p class="md-muted">domains currently blocked by policy</p>
+  </article>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h3>Edit Policy</h3>
+    <p class="md-muted">Saving requires an admin key.</p>
+    <div class="md-form-row">
+      <label class="md-label" for="apiKey">Admin API Key</label>
+      <input class="md-input" id="apiKey" type="text" placeholder="change-me-admin">
+    </div>
+    <form id="policyForm">
+      <div class="md-grid md-grid-2">
+        <div class="md-form-row">
+          <label class="md-label" for="rateWorkspace">Workspace Hourly Limit</label>
+          <input class="md-input" id="rateWorkspace" type="number" min="1" name="rate_limit_workspace_per_hour" value="{{.Policy.RateLimitWorkspacePerHour}}">
+        </div>
+        <div class="md-form-row">
+          <label class="md-label" for="rateDomain">Domain Hourly Limit</label>
+          <input class="md-input" id="rateDomain" type="number" min="1" name="rate_limit_domain_per_hour" value="{{.Policy.RateLimitDomainPerHour}}">
+        </div>
+      </div>
+      <div class="md-form-row">
+        <label class="md-label" for="blockedDomains">Blocked Recipient Domains</label>
+        <textarea class="md-input md-textarea" id="blockedDomains" rows="6" placeholder="mailinator.com, tempmail.com">{{.BlockedDomainsStr}}</textarea>
+      </div>
+      <div class="md-button-row">
+        <button class="md-button md-button--primary" type="submit">Save Policy</button>
+        <button class="md-button" id="resetPolicy" type="button">Reset Draft</button>
+      </div>
+    </form>
+  </article>
+  <article class="md-panel">
+    <h3>Policy Notes</h3>
+    <ul class="md-list">
+      <li>Workspace limit protects the tenant-wide send budget during spikes.</li>
+      <li>Domain limit protects downstream domains from bursty retries or bad targeting.</li>
+      <li>Blocked domains should be used for durable policy decisions, not one-off suppressions.</li>
+      <li>Use suppressions or unsubscribes in the logs console for recipient-level actions.</li>
+    </ul>
+    <div id="status" class="md-empty">No policy update submitted yet.</div>
+    <pre id="result" class="md-pre md-pre--compact">Current policy snapshot will appear here after save.</pre>
+  </article>
+</section>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const initialPolicy = {
+  workspace_limit: {{.Policy.RateLimitWorkspacePerHour}},
+  domain_limit: {{.Policy.RateLimitDomainPerHour}},
+  blocked_domains: {{.BlockedDomainsStr}}
+};
+const form = document.getElementById('policyForm');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const workspaceLimitCardEl = document.getElementById('workspaceLimitCard');
+const domainLimitCardEl = document.getElementById('domainLimitCard');
+const blockedCountCardEl = document.getElementById('blockedCountCard');
+
+function blockedDomainsList() {
+  return document.getElementById('blockedDomains').value
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function syncCards() {
+  const workspaceLimit = Number(document.getElementById('rateWorkspace').value || 0);
+  const domainLimit = Number(document.getElementById('rateDomain').value || 0);
+  workspaceLimitCardEl.textContent = String(workspaceLimit || 0);
+  domainLimitCardEl.textContent = String(domainLimit || 0);
+  blockedCountCardEl.textContent = String(blockedDomainsList().length);
+}
+
+function resetDraft() {
+  document.getElementById('rateWorkspace').value = String(initialPolicy.workspace_limit);
+  document.getElementById('rateDomain').value = String(initialPolicy.domain_limit);
+  document.getElementById('blockedDomains').value = initialPolicy.blocked_domains;
+  statusEl.textContent = 'Draft reset to the current policy values.';
+  resultEl.textContent = 'Current policy snapshot will appear here after save.';
+  syncCards();
+}
+
+document.getElementById('rateWorkspace').addEventListener('input', syncCards);
+document.getElementById('rateDomain').addEventListener('input', syncCards);
+document.getElementById('blockedDomains').addEventListener('input', syncCards);
+document.getElementById('resetPolicy').addEventListener('click', resetDraft);
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const body = {
+    workspace_id: {{.WorkspaceID}},
+    rate_limit_workspace_per_hour: Number(document.getElementById('rateWorkspace').value),
+    rate_limit_domain_per_hour: Number(document.getElementById('rateDomain').value),
+    blocked_recipient_domains: blockedDomainsList()
+  };
+  statusEl.textContent = 'Saving policy...';
+  const res = await fetch('/v1/workspaces/policy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  statusEl.textContent = res.ok ? 'Policy saved. HTTP ' + res.status : 'Policy save failed. HTTP ' + res.status;
+  resultEl.textContent = text;
+});
+
+syncCards();
+</script>
+{{end}}

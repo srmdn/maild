@@ -22,6 +22,7 @@ import (
 	"github.com/srmdn/maild/internal/service"
 	"github.com/srmdn/maild/internal/smtpclient"
 	"github.com/srmdn/maild/internal/store/postgres"
+	"github.com/srmdn/maild/internal/web"
 	"github.com/srmdn/maild/internal/worker"
 )
 
@@ -92,7 +93,7 @@ func Run() error {
 		cfg.WebhookMaxSkew,
 		logger,
 	)
-	server := httpserver.New(cfg, logger, deps, apiHandler)
+	server := httpserver.New(cfg, logger, deps, apiHandler, web.FS)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 
 	errCh := make(chan error, 1)

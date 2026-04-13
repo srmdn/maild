@@ -1,0 +1,146 @@
+{{define "title"}}Onboarding{{end}}
+
+{{define "content"}}
+<section class="md-panel md-panel--hero">
+  <div class="md-kicker">Technical Setup</div>
+  <h2>Onboarding Checklist</h2>
+  <p class="md-muted">Use API mode or demo mode. Demo mode works without any backend/API calls.</p>
+</section>
+
+<section class="md-panel">
+  <h3>Session Controls</h3>
+  <div class="md-form-row">
+    <label class="md-label" for="apiKey">API Key</label>
+    <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
+  </div>
+  <div class="md-grid md-grid-2">
+    <div class="md-form-row">
+      <label class="md-label" for="domain">Domain (optional)</label>
+      <input class="md-input" id="domain" type="text" placeholder="maild.click">
+    </div>
+    <div class="md-form-row">
+      <label class="md-label" for="selector">DKIM selector (optional)</label>
+      <input class="md-input" id="selector" type="text" placeholder="default">
+    </div>
+  </div>
+  <div class="md-button-row">
+    <button id="loadChecklist" class="md-button md-button--primary">Load From API</button>
+    <button id="loadDemo" class="md-button">Use Demo Checklist</button>
+  </div>
+  <p id="status" class="md-muted">No checklist loaded.</p>
+</section>
+
+<section class="md-panel">
+  <h3>Checklist Items</h3>
+  <div id="emptyState" class="md-empty">Choose "Load From API" or "Use Demo Checklist" to start.</div>
+  <div id="errorState" class="md-error" hidden></div>
+  <div class="md-table-wrap">
+    <table id="table" class="md-table" hidden>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Status</th>
+          <th>Evidence</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</section>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const workspaceId = {{.WorkspaceID}};
+const rowsEl = document.getElementById('rows');
+const tableEl = document.getElementById('table');
+const emptyStateEl = document.getElementById('emptyState');
+const errorStateEl = document.getElementById('errorState');
+const statusEl = document.getElementById('status');
+
+function headers() {
+  const key = document.getElementById('apiKey').value.trim();
+  return key ? { 'X-API-Key': key } : {};
+}
+
+function setState(kind, message) {
+  statusEl.textContent = message;
+  if (kind === 'empty') {
+    emptyStateEl.hidden = false;
+    tableEl.hidden = true;
+    errorStateEl.hidden = true;
+    return;
+  }
+  if (kind === 'loading') {
+    emptyStateEl.hidden = false;
+    emptyStateEl.textContent = 'Loading checklist...';
+    tableEl.hidden = true;
+    errorStateEl.hidden = true;
+    return;
+  }
+  if (kind === 'error') {
+    emptyStateEl.hidden = true;
+    tableEl.hidden = true;
+    errorStateEl.hidden = false;
+    errorStateEl.textContent = message;
+    return;
+  }
+  emptyStateEl.hidden = true;
+  tableEl.hidden = false;
+  errorStateEl.hidden = true;
+}
+
+function renderChecklist(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  rowsEl.innerHTML = '';
+  for (const item of items) {
+    const tr = document.createElement('tr');
+    const badgeClass = item.done ? 'md-badge md-badge--ok' : 'md-badge md-badge--warn';
+    tr.innerHTML =
+      '<td><strong>' + (item.title || item.id || 'Untitled') + '</strong><div class="md-muted">' + (item.description || '') + '</div></td>' +
+      '<td><span class="' + badgeClass + '">' + (item.done ? 'done' : 'pending') + '</span></td>' +
+      '<td><code>' + (item.evidence || 'n/a') + '</code></td>' +
+      '<td><code>' + (item.action || 'n/a') + '</code></td>';
+    rowsEl.appendChild(tr);
+  }
+  setState('ready', 'Checklist loaded. Completed: ' + (payload.completed || 0) + '/' + (payload.total || 0));
+}
+
+function demoChecklist() {
+  return {
+    workspace_id: workspaceId,
+    total: 5,
+    completed: 3,
+    items: [
+      { id: 'smtp_connected', title: 'SMTP account connected', description: 'Active account exists for workspace.', done: true, evidence: 'active_provider=mailgun', action: 'POST /v1/smtp-accounts' },
+      { id: 'domain_readiness_checked', title: 'Check domain readiness', description: 'SPF, DKIM, DMARC validated.', done: true, evidence: 'spf=true, dkim=true, dmarc=true', action: 'POST /v1/domains/readiness' },
+      { id: 'retry_path_tested', title: 'Retry path tested', description: 'Failed message can be retried.', done: true, evidence: 'retry_result=retried:1', action: 'POST /v1/messages/retry' },
+      { id: 'webhook_path_verified', title: 'Webhook path verified', description: 'Dead-letter replay verified.', done: false, evidence: 'no dead-letter replay run yet', action: 'POST /v1/webhooks/replay' },
+      { id: 'policy_limits_checked', title: 'Workspace policy validated', description: 'Rate and domain limits reviewed.', done: false, evidence: 'blocked_domains not configured', action: 'GET/POST /v1/workspaces/policy' }
+    ]
+  };
+}
+
+async function loadFromAPI() {
+  const domain = document.getElementById('domain').value.trim();
+  const selector = document.getElementById('selector').value.trim();
+  let url = '/v1/ops/onboarding-checklist?workspace_id=' + workspaceId;
+  if (domain) url += '&domain=' + encodeURIComponent(domain);
+  if (selector) url += '&dkim_selector=' + encodeURIComponent(selector);
+
+  setState('loading', 'Loading checklist from API...');
+  const res = await fetch(url, { headers: headers() });
+  if (!res.ok) {
+    setState('error', 'Onboarding checklist HTTP ' + res.status + ': ' + await res.text());
+    return;
+  }
+  renderChecklist(await res.json());
+}
+
+document.getElementById('loadChecklist').addEventListener('click', loadFromAPI);
+document.getElementById('loadDemo').addEventListener('click', () => {
+  renderChecklist(demoChecklist());
+});
+</script>
+{{end}}

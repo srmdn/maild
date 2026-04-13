@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{template "title" .}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+  <main class="md-shell">
+    <header class="md-topbar">
+      <div>
+        <div class="md-brand">maild {{template "title" .}}</div>
+        <div class="md-sub">Workspace <code>{{.WorkspaceID}}</code></div>
+      </div>
+      <nav class="md-nav" aria-label="Primary">
+        <a class="{{if eq .Active "dashboard"}}md-nav-active{{end}}" href="/ui?workspace_id={{.WorkspaceID}}">Dashboard</a>
+        <a class="{{if eq .Active "logs"}}md-nav-active{{end}}" href="/ui/logs?workspace_id={{.WorkspaceID}}">Logs</a>
+        <a class="{{if eq .Active "onboarding"}}md-nav-active{{end}}" href="/ui/onboarding?workspace_id={{.WorkspaceID}}">Onboarding</a>
+        <a class="{{if eq .Active "incidents"}}md-nav-active{{end}}" href="/ui/incidents?workspace_id={{.WorkspaceID}}">Incidents</a>
+        <a class="{{if eq .Active "policy"}}md-nav-active{{end}}" href="/ui/policy?workspace_id={{.WorkspaceID}}">Policy</a>
+      </nav>
+    </header>
+
+    {{template "content" .}}
+  </main>
+
+  {{template "scripts" .}}
+</body>
+</html>
+
+{{define "title"}}Dashboard{{end}}
+{{define "content"}}{{end}}
+{{define "scripts"}}{{end}}

@@ -1,0 +1,74 @@
+{{define "title"}}Dashboard{{end}}
+
+{{define "content"}}
+<section class="md-panel md-panel--hero">
+  <div class="md-kicker">Operator Console</div>
+  <h2>Welcome to maild</h2>
+  <p class="md-muted">Your control plane for outbound email operations. Use the navigation above or the quick actions below to manage your workspace.</p>
+</section>
+
+<section class="md-grid md-grid-2">
+  <article class="md-panel">
+    <h3>Logs and Timeline</h3>
+    <p class="md-muted">Investigate message outcomes, queue states, retries, and webhook dead letters.</p>
+    <a class="md-button" href="/ui/logs?workspace_id={{.WorkspaceID}}">Open Logs</a>
+  </article>
+  <article class="md-panel">
+    <h3>Onboarding</h3>
+    <p class="md-muted">Run technical readiness checklist with evidence capture.</p>
+    <a class="md-button" href="/ui/onboarding?workspace_id={{.WorkspaceID}}">Open Onboarding</a>
+  </article>
+  <article class="md-panel">
+    <h3>Incident Response</h3>
+    <p class="md-muted">Export incident bundles and inspect attempts and webhook context.</p>
+    <a class="md-button" href="/ui/incidents?workspace_id={{.WorkspaceID}}">Open Incidents</a>
+  </article>
+  <article class="md-panel">
+    <h3>Policy Controls</h3>
+    <p class="md-muted">Update workspace rate limits and blocked recipient domains.</p>
+    <a class="md-button" href="/ui/policy?workspace_id={{.WorkspaceID}}">Open Policy</a>
+  </article>
+</section>
+
+<section class="md-panel">
+  <h3>Frontend IA and API Ownership</h3>
+  <div class="md-table-wrap">
+    <table class="md-table">
+      <thead>
+        <tr>
+          <th>Page</th>
+          <th>Purpose</th>
+          <th>Success Metric</th>
+          <th>Primary APIs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Dashboard</td>
+          <td>Entry point for operator journeys.</td>
+          <td>Operators navigate to target workflow in one click.</td>
+          <td>None required.</td>
+        </tr>
+        <tr>
+          <td>Logs/Timeline</td>
+          <td>Triage deliveries and perform retries/replays.</td>
+          <td>Failed message is identified and retried quickly.</td>
+          <td><code>GET /v1/messages/logs</code>, <code>GET /v1/messages/timeline</code>, <code>POST /v1/messages/retry</code>, <code>GET /v1/webhooks/logs</code>, <code>POST /v1/webhooks/replay</code></td>
+        </tr>
+        <tr>
+          <td>Onboarding</td>
+          <td>Run checklist and attach evidence.</td>
+          <td>Checklist reaches completion with domain checks verified.</td>
+          <td><code>GET /v1/ops/onboarding-checklist</code>, <code>POST /v1/domains/readiness</code></td>
+        </tr>
+        <tr>
+          <td>Incidents</td>
+          <td>Bundle export and context drill-down from message ID.</td>
+          <td>Bundle downloaded with message+attempt+webhook context.</td>
+          <td><code>GET /v1/incidents/bundle</code>, <code>GET /v1/messages/timeline</code>, <code>GET /v1/webhooks/logs</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
