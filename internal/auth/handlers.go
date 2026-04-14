@@ -293,6 +293,118 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(userWithWS)
 }
 
+func (h *AuthHandler) GetOnboardingChecklist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, err := h.getSessionID(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := h.sessionStore.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userWithWS, err := h.store.GetUserWorkspace(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	seen, err := h.store.GetOnboardingSeen(r.Context(), userID, userWithWS.WorkspaceID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type checklistItem struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Done        bool   `json:"done"`
+		ActionLabel string `json:"action_label,omitempty"`
+		ActionHref  string `json:"action_href,omitempty"`
+	}
+
+	hasSMTP, hasDomain, hasPolicy, hasMessage, err := h.store.GetOnboardingChecklistItems(r.Context(), userWithWS.WorkspaceID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	items := []checklistItem{
+		{ID: "smtp_connected", Title: "Connect SMTP account", Description: "Add your SMTP credentials so maild can send emails.", Done: hasSMTP, ActionLabel: "Add SMTP Account", ActionHref: "/ui/policy"},
+		{ID: "domain_verified", Title: "Verify your domain", Description: "Add and verify your sending domain (SPF, DKIM, DMARC).", Done: hasDomain, ActionLabel: "Run Domain Check", ActionHref: "/ui/onboarding"},
+		{ID: "test_sent", Title: "Send a test email", Description: "Send your first message to verify the pipeline end-to-end.", Done: hasMessage, ActionLabel: "View Logs", ActionHref: "/ui/logs"},
+		{ID: "policy_configured", Title: "Configure workspace policy", Description: "Set rate limits and blocked domains for your workspace.", Done: hasPolicy, ActionLabel: "Configure Policy", ActionHref: "/ui/policy"},
+	}
+
+	completed := 0
+	for _, item := range items {
+		if item.Done {
+			completed++
+		}
+	}
+
+	resp := struct {
+		WorkspaceID int64           `json:"workspace_id"`
+		Seen        bool            `json:"seen"`
+		Total       int             `json:"total"`
+		Completed   int             `json:"completed"`
+		Items       []checklistItem `json:"items"`
+	}{
+		WorkspaceID: userWithWS.WorkspaceID,
+		Seen:        seen,
+		Total:       len(items),
+		Completed:   completed,
+		Items:       items,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *AuthHandler) DismissOnboarding(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, err := h.getSessionID(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := h.sessionStore.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userWithWS, err := h.store.GetUserWorkspace(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.store.DismissOnboarding(r.Context(), userID, userWithWS.WorkspaceID); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "dismissed"})
+}
+
 func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID, err := h.getSessionID(r)

@@ -46,6 +46,8 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 		mux.HandleFunc("/me", authHandler.Me)
 		mux.HandleFunc("/api/v1/auth/signup", authHandler.Signup)
 		mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
+		mux.HandleFunc("/api/v1/onboarding/checklist", authHandler.RequireAuth(authHandler.GetOnboardingChecklist))
+		mux.HandleFunc("/api/v1/onboarding/dismiss", authHandler.RequireAuth(authHandler.DismissOnboarding))
 		mux.HandleFunc("/dashboard", authHandler.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
 			handleDashboard(w, r, authHandler, cfg.OperatorAPIKey)
 		}))

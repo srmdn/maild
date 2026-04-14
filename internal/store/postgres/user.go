@@ -110,3 +110,58 @@ func (s *Store) EmailExists(ctx context.Context, email string) (bool, error) {
 	).Scan(&exists)
 	return exists, err
 }
+
+func (s *Store) GetOnboardingSeen(ctx context.Context, userID, workspaceID int64) (bool, error) {
+	var seenAt sql.NullTime
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT onboarding_seen_at FROM user_workspaces WHERE user_id = $1 AND workspace_id = $2`,
+		userID, workspaceID,
+	).Scan(&seenAt)
+	if err != nil {
+		return false, err
+	}
+	return seenAt.Valid && !seenAt.Time.IsZero(), nil
+}
+
+func (s *Store) DismissOnboarding(ctx context.Context, userID, workspaceID int64) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`UPDATE user_workspaces SET onboarding_seen_at = now() WHERE user_id = $1 AND workspace_id = $2`,
+		userID, workspaceID,
+	)
+	return err
+}
+
+func (s *Store) GetOnboardingChecklistItems(ctx context.Context, workspaceID int64) (smtp, domain, policy, message bool, err error) {
+	err = s.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM smtp_accounts WHERE workspace_id = $1 AND is_active = TRUE)`,
+		workspaceID,
+	).Scan(&smtp)
+	if err != nil {
+		return
+	}
+	err = s.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM domains WHERE workspace_id = $1 AND verified = TRUE)`,
+		workspaceID,
+	).Scan(&domain)
+	if err != nil {
+		return
+	}
+	err = s.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM workspace_policies WHERE workspace_id = $1)`,
+		workspaceID,
+	).Scan(&policy)
+	if err != nil {
+		return
+	}
+	err = s.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM messages WHERE workspace_id = $1 AND status IN ('sent','delivered','failed'))`,
+		workspaceID,
+	).Scan(&message)
+	return
+}

@@ -45,6 +45,24 @@
     .dash-quick-link-desc { color: #888; font-size: 12px; margin: 0; }
     .dash-copy-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 1px solid #ff4d00; color: #fafafa; padding: 12px 24px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .dash-copy-toast.show { opacity: 1; }
+    .dash-onboarding { border-color: #ff4d00; }
+    .dash-onboarding-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+    .dash-onboarding-progress { color: #888; font-size: 13px; margin: 0; }
+    .dash-onboarding-progress-bar { flex: 1; max-width: 120px; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+    .dash-onboarding-progress-fill { height: 100%; background: #ff4d00; border-radius: 2px; transition: width 0.4s ease; width: 0%; }
+    .dash-onboarding-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #1a1a1a; }
+    .dash-onboarding-item:last-child { border-bottom: none; }
+    .dash-onboarding-item-icon { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+    .dash-onboarding-item-icon.done { background: #ff4d00; color: #fff; }
+    .dash-onboarding-item-icon.pending { background: #222; color: #555; }
+    .dash-onboarding-item-content { flex: 1; }
+    .dash-onboarding-item-title { font-size: 14px; font-weight: 500; margin: 0 0 2px; }
+    .dash-onboarding-item-desc { font-size: 12px; color: #666; margin: 0 0 6px; }
+    .dash-onboarding-item-link { font-size: 12px; color: #ff4d00; text-decoration: none; }
+    .dash-onboarding-item-link:hover { text-decoration: underline; }
+    .dash-onboarding-complete .dash-onboarding-item-icon.done { background: #22c55e; }
+    .dash-button-secondary { background: transparent; border: 1px solid #333; color: #888; padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; font-family: inherit; transition: all 0.2s; }
+    .dash-button-secondary:hover { border-color: #555; color: #fafafa; }
     .dash-footer { border-top: 1px solid #222; padding: 24px; text-align: center; color: #555; font-size: 14px; background: #111; }
     .dash-footer a { color: #888; text-decoration: none; }
     .dash-footer a:hover { color: #fafafa; }
@@ -112,6 +130,18 @@
             <code class="dash-api-key" id="apiKey">Loading...</code>
             <button class="dash-api-key-copy" id="copyKey">Copy</button>
           </div>
+        </div>
+
+        <div id="onboardingPanel" class="dash-panel dash-onboarding" style="margin-bottom: 24px;">
+          <div class="dash-onboarding-header">
+            <div>
+              <p class="dash-panel-title" style="margin-bottom: 4px;">Setup Checklist</p>
+              <p class="dash-onboarding-progress"><span id="onboardingCompleted">0</span> of <span id="onboardingTotal">0</span> complete</p>
+            </div>
+            <div class="dash-onboarding-progress-bar"><div class="dash-onboarding-progress-fill" id="onboardingFill"></div></div>
+          </div>
+          <div id="onboardingItems"></div>
+          <button class="dash-button-secondary" id="dismissOnboarding" style="margin-top: 16px; width: 100%;">Dismiss</button>
         </div>
 
         <div class="dash-panel">
@@ -206,6 +236,45 @@
       document.getElementById('createdAt').textContent = date.toLocaleDateString();
     }
 
+    async function loadOnboarding() {
+      const res = await fetch('/api/v1/onboarding/checklist');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      document.getElementById('onboardingCompleted').textContent = data.completed;
+      document.getElementById('onboardingTotal').textContent = data.total;
+
+      const pct = data.total > 0 ? (data.completed / data.total * 100) : 0;
+      document.getElementById('onboardingFill').style.width = pct + '%';
+
+      const panel = document.getElementById('onboardingPanel');
+      if (data.seen || data.completed === data.total) {
+        panel.style.display = 'none';
+        return;
+      }
+
+      const itemsEl = document.getElementById('onboardingItems');
+      itemsEl.innerHTML = '';
+      for (const item of data.items) {
+        const div = document.createElement('div');
+        div.className = 'dash-onboarding-item';
+        div.innerHTML =
+          '<div class="dash-onboarding-item-icon ' + (item.done ? 'done' : 'pending') + '">' +
+            (item.done ? '&#10003;' : '&#8211;') +
+          '</div>' +
+          '<div class="dash-onboarding-item-content">' +
+            '<p class="dash-onboarding-item-title">' + item.title + '</p>' +
+            '<p class="dash-onboarding-item-desc">' + item.description + '</p>' +
+            (!item.done && item.action_href ? '<a href="' + item.action_href + '" class="dash-onboarding-item-link">' + item.action_label + ' &#8594;</a>' : '') +
+          '</div>';
+        itemsEl.appendChild(div);
+      }
+
+      if (data.completed === data.total) {
+        panel.classList.add('dash-onboarding-complete');
+      }
+    }
+
     document.getElementById('copyKey').addEventListener('click', () => {
       navigator.clipboard.writeText(API_KEY);
       const toast = document.getElementById('toast');
@@ -218,7 +287,13 @@
       window.location.href = '/';
     });
 
+    document.getElementById('dismissOnboarding').addEventListener('click', async () => {
+      await fetch('/api/v1/onboarding/dismiss', { method: 'POST' });
+      document.getElementById('onboardingPanel').style.display = 'none';
+    });
+
     loadUser();
+    loadOnboarding();
   </script>
 </body>
 </html>
