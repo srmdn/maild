@@ -45,6 +45,50 @@
     .dash-quick-link-desc { color: #888; font-size: 12px; margin: 0; }
     .dash-copy-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 1px solid #ff4d00; color: #fafafa; padding: 12px 24px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .dash-copy-toast.show { opacity: 1; }
+    .dash-onboarding { border-color: #ff4d00; }
+    .dash-onboarding-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+    .dash-onboarding-progress { color: #888; font-size: 13px; margin: 0; }
+    .dash-onboarding-progress-bar { flex: 1; max-width: 120px; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+    .dash-onboarding-progress-fill { height: 100%; background: #ff4d00; border-radius: 2px; transition: width 0.4s ease; width: 0%; }
+    .dash-onboarding-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #1a1a1a; }
+    .dash-onboarding-item:last-child { border-bottom: none; }
+    .dash-onboarding-item-icon { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+    .dash-onboarding-item-icon.done { background: #ff4d00; color: #fff; }
+    .dash-onboarding-item-icon.pending { background: #222; color: #555; }
+    .dash-onboarding-item-content { flex: 1; }
+    .dash-onboarding-item-title { font-size: 14px; font-weight: 500; margin: 0 0 2px; }
+    .dash-onboarding-item-desc { font-size: 12px; color: #666; margin: 0 0 6px; }
+    .dash-onboarding-item-link { font-size: 12px; color: #ff4d00; text-decoration: none; }
+    .dash-onboarding-item-link:hover { text-decoration: underline; }
+    .dash-onboarding-complete .dash-onboarding-item-icon.done { background: #22c55e; }
+    .dash-button-secondary { background: transparent; border: 1px solid #333; color: #888; padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; font-family: inherit; transition: all 0.2s; }
+    .dash-button-secondary:hover { border-color: #555; color: #fafafa; }
+    .dash-key-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #1a1a1a; }
+    .dash-key-item:last-child { border-bottom: none; }
+    .dash-key-meta { flex: 1; }
+    .dash-key-name { font-size: 14px; font-weight: 500; margin: 0 0 2px; }
+    .dash-key-prefix { font-size: 12px; color: #555; font-family: 'JetBrains Mono', monospace; }
+    .dash-key-meta-row { display: flex; gap: 12px; font-size: 12px; color: #555; margin-top: 2px; }
+    .dash-key-delete { background: transparent; border: none; color: #555; cursor: pointer; font-size: 12px; font-family: inherit; padding: 4px 8px; border-radius: 4px; transition: all 0.2s; }
+    .dash-key-delete:hover { color: #ef4444; background: rgba(239,68,68,0.1); }
+    .dash-key-created-banner { background: #1a1a1a; border: 1px solid #ff4d00; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .dash-key-created-title { font-size: 14px; font-weight: 600; color: #ff4d00; margin: 0 0 8px; }
+    .dash-key-created-text { font-size: 12px; color: #888; margin: 0 0 8px; }
+    .dash-key-created-value { display: flex; align-items: center; gap: 8px; background: #111; border: 1px solid #333; border-radius: 6px; padding: 8px 12px; }
+    .dash-key-created-value code { font-family: 'JetBrains Mono', monospace; font-size: 13px; flex: 1; word-break: break-all; }
+    .dash-create-key-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 300; }
+    .dash-create-key-modal.hidden { display: none; }
+    .dash-create-key-box { background: #111; border: 1px solid #222; border-radius: 12px; padding: 24px; width: 100%; max-width: 400px; }
+    .dash-create-key-box h3 { margin: 0 0 16px; font-size: 16px; }
+    .dash-create-key-box input { width: 100%; background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 10px 12px; color: #fafafa; font-size: 14px; font-family: inherit; box-sizing: border-box; }
+    .dash-create-key-box input:focus { outline: none; border-color: #ff4d00; }
+    .dash-create-key-box .dash-modal-row { display: flex; gap: 8px; margin-top: 12px; }
+    .dash-create-key-box .dash-modal-row button { flex: 1; padding: 10px; border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; }
+    .dash-create-key-box .dash-modal-row .btn-cancel { background: transparent; border: 1px solid #333; color: #888; }
+    .dash-create-key-box .dash-modal-row .btn-cancel:hover { border-color: #555; color: #fafafa; }
+    .dash-create-key-box .dash-modal-row .btn-create { background: #ff4d00; border: none; color: #fff; font-weight: 600; }
+    .dash-create-key-box .dash-modal-row .btn-create:hover { opacity: 0.9; }
+    .dash-create-key-box .dash-error { color: #ef4444; font-size: 13px; margin-top: 8px; }
     .dash-footer { border-top: 1px solid #222; padding: 24px; text-align: center; color: #555; font-size: 14px; background: #111; }
     .dash-footer a { color: #888; text-decoration: none; }
     .dash-footer a:hover { color: #fafafa; }
@@ -114,6 +158,17 @@
           </div>
         </div>
 
+        <div id="onboardingPanel" class="dash-panel dash-onboarding" style="margin-bottom: 24px;">
+          <div class="dash-onboarding-header">
+            <div>
+              <p class="dash-panel-title" style="margin-bottom: 4px;">Setup Checklist</p>
+              <p class="dash-onboarding-progress"><span id="onboardingCompleted">0</span> of <span id="onboardingTotal">0</span> complete</p>
+            </div>
+            <div class="dash-onboarding-progress-bar"><div class="dash-onboarding-progress-fill" id="onboardingFill"></div></div>
+          </div>
+          <div id="onboardingItems"></div>
+        </div>
+
         <div class="dash-panel">
           <p class="dash-panel-title">Quick Start</p>
           <div class="dash-quick-links">
@@ -150,6 +205,15 @@
 
       <div>
         <div class="dash-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <p class="dash-panel-title" style="margin: 0;">API Keys</p>
+            <button class="dash-button-secondary" id="createKeyBtn">+ New Key</button>
+          </div>
+          <div id="keysList"></div>
+          <div id="keysEmpty" style="color: #555; font-size: 13px; padding: 12px 0;">No API keys yet.</div>
+        </div>
+
+        <div class="dash-panel" style="margin-top: 16px;">
           <p class="dash-panel-title">Your Account</p>
           <p style="font-size: 14px; color: #888; margin: 0 0 16px;">Member since <span id="createdAt">-</span></p>
           <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -172,6 +236,34 @@
   </footer>
 
   <div class="dash-copy-toast" id="toast">Copied to clipboard!</div>
+
+  <div class="dash-create-key-modal hidden" id="createKeyModal">
+    <div class="dash-create-key-box">
+      <h3>Create API Key</h3>
+      <input type="text" id="newKeyName" placeholder="Key name (e.g. production, staging)" maxlength="64">
+      <div class="dash-error hidden" id="createKeyError"></div>
+      <div class="dash-modal-row">
+        <button class="btn-cancel" id="cancelCreateKey">Cancel</button>
+        <button class="btn-create" id="confirmCreateKey">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dash-create-key-modal hidden" id="keyCreatedModal">
+    <div class="dash-create-key-box">
+      <div class="dash-key-created-banner">
+        <p class="dash-key-created-title">API Key Created</p>
+        <p class="dash-key-created-text">Copy this key now. You will not be able to see it again.</p>
+        <div class="dash-key-created-value">
+          <code id="newKeyValue">-</code>
+          <button class="dash-api-key-copy" id="copyNewKey" style="background:transparent;border:none;color:#888;cursor:pointer;font-size:12px;">Copy</button>
+        </div>
+      </div>
+      <div class="dash-modal-row">
+        <button class="btn-cancel" id="closeKeyCreated" style="flex:1;padding:10px;border-radius:6px;font-size:14px;cursor:pointer;font-family:inherit;background:transparent;border:1px solid #333;color:#888;">Done</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     function toggleDashNav() {
@@ -206,6 +298,45 @@
       document.getElementById('createdAt').textContent = date.toLocaleDateString();
     }
 
+    async function loadOnboarding() {
+      const res = await fetch('/api/v1/onboarding/checklist');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      document.getElementById('onboardingCompleted').textContent = data.completed;
+      document.getElementById('onboardingTotal').textContent = data.total;
+
+      const pct = data.total > 0 ? (data.completed / data.total * 100) : 0;
+      document.getElementById('onboardingFill').style.width = pct + '%';
+
+      const panel = document.getElementById('onboardingPanel');
+      if (data.seen || data.completed === data.total) {
+        panel.style.display = 'none';
+        return;
+      }
+
+      const itemsEl = document.getElementById('onboardingItems');
+      itemsEl.innerHTML = '';
+      for (const item of data.items) {
+        const div = document.createElement('div');
+        div.className = 'dash-onboarding-item';
+        div.innerHTML =
+          '<div class="dash-onboarding-item-icon ' + (item.done ? 'done' : 'pending') + '">' +
+            (item.done ? '&#10003;' : '&#8211;') +
+          '</div>' +
+          '<div class="dash-onboarding-item-content">' +
+            '<p class="dash-onboarding-item-title">' + item.title + '</p>' +
+            '<p class="dash-onboarding-item-desc">' + item.description + '</p>' +
+            (!item.done && item.action_href ? '<a href="' + item.action_href + '" class="dash-onboarding-item-link">' + item.action_label + ' &#8594;</a>' : '') +
+          '</div>';
+        itemsEl.appendChild(div);
+      }
+
+      if (data.completed === data.total) {
+        panel.classList.add('dash-onboarding-complete');
+      }
+    }
+
     document.getElementById('copyKey').addEventListener('click', () => {
       navigator.clipboard.writeText(API_KEY);
       const toast = document.getElementById('toast');
@@ -218,7 +349,112 @@
       window.location.href = '/';
     });
 
+    async function loadAPIKeys() {
+      const res = await fetch('/api/v1/user/keys');
+      if (!res.ok) return;
+      const keys = await res.json();
+      const listEl = document.getElementById('keysList');
+      const emptyEl = document.getElementById('keysEmpty');
+      if (keys.length === 0) {
+        listEl.innerHTML = '';
+        emptyEl.style.display = 'block';
+        return;
+      }
+      emptyEl.style.display = 'none';
+      listEl.innerHTML = '';
+      for (const k of keys) {
+        const div = document.createElement('div');
+        div.className = 'dash-key-item';
+        div.innerHTML =
+          '<div class="dash-key-meta">' +
+            '<p class="dash-key-name">' + k.name + '</p>' +
+            '<div class="dash-key-meta-row">' +
+              '<span>' + k.key_prefix + '...</span>' +
+              '<span>Created ' + new Date(k.created_at).toLocaleDateString() + '</span>' +
+              (k.last_used_at ? '<span>Used ' + new Date(k.last_used_at).toLocaleDateString() + '</span>' : '') +
+            '</div>' +
+          '</div>' +
+          '<button class="dash-key-delete" data-id="' + k.id + '">Delete</button>';
+        listEl.appendChild(div);
+      }
+      document.querySelectorAll('.dash-key-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this API key?')) return;
+          const id = btn.getAttribute('data-id');
+          const res = await fetch('/api/v1/user/keys', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(id) })
+          });
+          if (res.ok) loadAPIKeys();
+        });
+      });
+    }
+
+    document.getElementById('createKeyBtn').addEventListener('click', () => {
+      document.getElementById('createKeyModal').classList.remove('hidden');
+      document.getElementById('newKeyName').value = '';
+      document.getElementById('createKeyError').classList.add('hidden');
+      document.getElementById('newKeyName').focus();
+    });
+
+    document.getElementById('cancelCreateKey').addEventListener('click', () => {
+      document.getElementById('createKeyModal').classList.add('hidden');
+    });
+
+    document.getElementById('confirmCreateKey').addEventListener('click', async () => {
+      const name = document.getElementById('newKeyName').value.trim();
+      if (!name) {
+        const err = document.getElementById('createKeyError');
+        err.textContent = 'Name is required.';
+        err.classList.remove('hidden');
+        return;
+      }
+      const res = await fetch('/api/v1/user/keys/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      if (!res.ok) {
+        const err = document.getElementById('createKeyError');
+        err.textContent = 'Failed to create key.';
+        err.classList.remove('hidden');
+        return;
+      }
+      const k = await res.json();
+      document.getElementById('createKeyModal').classList.add('hidden');
+      document.getElementById('newKeyValue').textContent = k.key;
+      document.getElementById('keyCreatedModal').classList.remove('hidden');
+    });
+
+    document.getElementById('copyNewKey').addEventListener('click', () => {
+      const val = document.getElementById('newKeyValue').textContent;
+      navigator.clipboard.writeText(val);
+      document.getElementById('copyNewKey').textContent = 'Copied!';
+      setTimeout(() => document.getElementById('copyNewKey').textContent = 'Copy', 2000);
+    });
+
+    document.getElementById('closeKeyCreated').addEventListener('click', () => {
+      document.getElementById('keyCreatedModal').classList.add('hidden');
+      loadAPIKeys();
+    });
+
+    document.getElementById('createKeyModal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('createKeyModal')) {
+        document.getElementById('createKeyModal').classList.add('hidden');
+      }
+    });
+
+    document.getElementById('keyCreatedModal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('keyCreatedModal')) {
+        document.getElementById('keyCreatedModal').classList.add('hidden');
+        loadAPIKeys();
+      }
+    });
+
     loadUser();
+    loadOnboarding();
+    loadAPIKeys();
   </script>
 </body>
 </html>

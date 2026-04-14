@@ -167,7 +167,6 @@
             <div class="dash-onboarding-progress-bar"><div class="dash-onboarding-progress-fill" id="onboardingFill"></div></div>
           </div>
           <div id="onboardingItems"></div>
-          <button class="dash-button-secondary" id="dismissOnboarding" style="margin-top: 16px; width: 100%;">Dismiss</button>
         </div>
 
         <div class="dash-panel">
@@ -348,11 +347,6 @@
     document.getElementById('logout').addEventListener('click', async () => {
       await fetch('/logout', { method: 'POST' });
       window.location.href = '/';
-    });
-
-    document.getElementById('dismissOnboarding').addEventListener('click', async () => {
-      await fetch('/api/v1/onboarding/dismiss', { method: 'POST' });
-      document.getElementById('onboardingPanel').style.display = 'none';
     });
 
     async function loadAPIKeys() {

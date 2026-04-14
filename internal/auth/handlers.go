@@ -318,12 +318,6 @@ func (h *AuthHandler) GetOnboardingChecklist(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	seen, err := h.store.GetOnboardingSeen(r.Context(), userID, userWithWS.WorkspaceID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
 	type checklistItem struct {
 		ID          string `json:"id"`
 		Title       string `json:"title"`
@@ -355,13 +349,11 @@ func (h *AuthHandler) GetOnboardingChecklist(w http.ResponseWriter, r *http.Requ
 
 	resp := struct {
 		WorkspaceID int64           `json:"workspace_id"`
-		Seen        bool            `json:"seen"`
 		Total       int             `json:"total"`
 		Completed   int             `json:"completed"`
 		Items       []checklistItem `json:"items"`
 	}{
 		WorkspaceID: userWithWS.WorkspaceID,
-		Seen:        seen,
 		Total:       len(items),
 		Completed:   completed,
 		Items:       items,
