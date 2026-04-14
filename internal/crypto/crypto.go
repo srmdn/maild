@@ -4,7 +4,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"io"
 )
@@ -50,4 +52,25 @@ func (s *Sealer) Open(ciphertext []byte) ([]byte, error) {
 	nonce := ciphertext[:nonceSize]
 	payload := ciphertext[nonceSize:]
 	return s.aead.Open(nil, nonce, payload, nil)
+}
+
+func GenerateAPIKey() (string, error) {
+	b := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", err
+	}
+	return "mk_" + base64.URLEncoding.EncodeToString(b), nil
+}
+
+func HashAPIKey(key string) string {
+	h := sha256.New()
+	h.Write([]byte(key))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func APIKeyPrefix(key string) string {
+	if len(key) < 8 {
+		return key
+	}
+	return key[:8]
 }

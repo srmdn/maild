@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/srmdn/maild/internal/crypto"
 	"github.com/srmdn/maild/internal/domain"
 	"github.com/srmdn/maild/internal/store/postgres"
 )
@@ -438,6 +439,166 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		ctx = context.WithValue(ctx, workspaceIDContextKey, userWithWS.WorkspaceID)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+func (h *AuthHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, err := h.getSessionID(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := h.sessionStore.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	keys, err := h.store.ListAPIKeys(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type keyResponse struct {
+		ID         int64  `json:"id"`
+		Name       string `json:"name"`
+		KeyPrefix  string `json:"key_prefix"`
+		LastUsedAt string `json:"last_used_at,omitempty"`
+		CreatedAt  string `json:"created_at"`
+	}
+	out := make([]keyResponse, 0, len(keys))
+	for _, k := range keys {
+		resp := keyResponse{
+			ID:        k.ID,
+			Name:      k.Name,
+			KeyPrefix: k.KeyPrefix,
+			CreatedAt: k.CreatedAt.Format(time.RFC3339),
+		}
+		if k.LastUsedAt != nil {
+			resp.LastUsedAt = k.LastUsedAt.Format(time.RFC3339)
+		}
+		out = append(out, resp)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (h *AuthHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, err := h.getSessionID(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := h.sessionStore.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "name must be 64 characters or less")
+		return
+	}
+
+	rawKey, err := crypto.GenerateAPIKey()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	keyHash := crypto.HashAPIKey(rawKey)
+	keyPrefix := crypto.APIKeyPrefix(rawKey)
+
+	k, err := h.store.CreateAPIKey(r.Context(), userID, req.Name, keyHash)
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "key name already exists")
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := domain.CreateAPIKeyResponse{
+		ID:        k.ID,
+		Name:      k.Name,
+		Key:       rawKey,
+		KeyPrefix: keyPrefix,
+		CreatedAt: k.CreatedAt.Format(time.RFC3339),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *AuthHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, err := h.getSessionID(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := h.sessionStore.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.ID <= 0 {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	if err := h.store.DeleteAPIKey(r.Context(), userID, req.ID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
 func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, sessionID string, maxAge int) {

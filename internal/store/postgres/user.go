@@ -165,3 +165,66 @@ func (s *Store) GetOnboardingChecklistItems(ctx context.Context, workspaceID int
 	).Scan(&message)
 	return
 }
+
+func (s *Store) CreateAPIKey(ctx context.Context, userID int64, name, keyHash string) (domain.UserAPIKey, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`INSERT INTO user_api_keys (user_id, name, key_hash) VALUES ($1, $2, $3) RETURNING id, user_id, name, last_used_at, created_at`,
+		userID, name, keyHash,
+	)
+	var k domain.UserAPIKey
+	var lastUsed sql.NullTime
+	err := row.Scan(&k.ID, &k.UserID, &k.Name, &lastUsed, &k.CreatedAt)
+	if err != nil {
+		return domain.UserAPIKey{}, err
+	}
+	if lastUsed.Valid {
+		k.LastUsedAt = &lastUsed.Time
+	}
+	return k, nil
+}
+
+func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]domain.UserAPIKey, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, user_id, name, last_used_at, created_at FROM user_api_keys WHERE user_id = $1 ORDER BY created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.UserAPIKey
+	for rows.Next() {
+		var k domain.UserAPIKey
+		var lastUsed sql.NullTime
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &lastUsed, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		if lastUsed.Valid {
+			k.LastUsedAt = &lastUsed.Time
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteAPIKey(ctx context.Context, userID, keyID int64) error {
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM user_api_keys WHERE id = $1 AND user_id = $2`,
+		keyID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errors.New("api key not found")
+	}
+	return nil
+}
