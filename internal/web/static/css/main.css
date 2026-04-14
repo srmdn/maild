@@ -109,17 +109,32 @@ code {
   max-width: 1200px;
   margin: 0 auto;
   padding: var(--md-space-4);
+  padding-top: calc(var(--md-space-4) + 72px);
 }
 
 .md-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--md-space-3);
-  margin-bottom: var(--md-space-4);
-  flex-wrap: wrap;
-  padding-bottom: var(--md-space-3);
+  padding: var(--md-space-3) var(--md-space-4);
+  background: var(--md-surface);
   border-bottom: 3px solid var(--md-border);
+  flex-wrap: wrap;
+}
+
+.md-topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .md-brand {
@@ -127,6 +142,8 @@ code {
   font-weight: 900;
   letter-spacing: -0.02em;
   text-transform: uppercase;
+  color: var(--md-text);
+  text-decoration: none;
 }
 
 .md-sub {
@@ -143,6 +160,7 @@ code {
   display: flex;
   gap: var(--md-space-2);
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .md-nav a {
@@ -168,6 +186,31 @@ code {
   background: var(--md-accent);
   color: var(--md-accent-ink);
   border-color: var(--md-accent);
+}
+
+.md-nav-toggle {
+  display: none;
+  background: none;
+  border: 2px solid var(--md-border);
+  padding: 8px;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.md-nav-toggle:focus-visible {
+  outline: 3px solid var(--md-accent);
+  outline-offset: 2px;
+}
+
+.md-nav-close {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--md-muted);
 }
 
 /* ========================================
@@ -505,17 +548,132 @@ code {
 }
 
 /* ========================================
+   FOOTER
+   ======================================== */
+
+.md-footer {
+  border-top: 3px solid var(--md-border);
+  padding: var(--md-space-4);
+  margin-top: var(--md-space-4);
+  background: var(--md-surface-2);
+}
+
+.md-footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--md-space-3);
+}
+
+.md-footer-brand {
+  font-size: var(--md-text-md);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
+.md-footer-text {
+  color: var(--md-muted);
+  font-size: var(--md-text-sm);
+}
+
+.md-footer-links {
+  display: flex;
+  gap: var(--md-space-3);
+}
+
+.md-footer-links a {
+  color: var(--md-muted);
+  text-decoration: none;
+  font-size: var(--md-text-sm);
+  transition: color 0.2s;
+}
+
+.md-footer-links a:hover {
+  color: var(--md-text);
+}
+
+/* ========================================
    RESPONSIVE
    ======================================== */
 
 @media (max-width: 900px) {
-  .md-shell { padding: var(--md-space-3); }
+  .md-shell { 
+    padding: var(--md-space-3); 
+    padding-top: calc(var(--md-space-3) + 72px);
+  }
   .md-grid-2 { grid-template-columns: 1fr; }
   .md-grid-3 { grid-template-columns: 1fr; }
   .md-grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  
+  .md-nav {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--md-surface);
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--md-space-4);
+    z-index: 200;
+    gap: var(--md-space-2);
+  }
+  
+  .md-nav.open {
+    display: flex;
+  }
+  
+  .md-nav a {
+    padding: var(--md-space-3);
+    font-size: var(--md-text-md);
+  }
+  
+  .md-nav-close {
+    display: block;
+    position: absolute;
+    top: var(--md-space-3);
+    right: var(--md-space-3);
+  }
+  
+  .md-nav-toggle {
+    display: block;
+  }
+  
+  .md-footer-inner {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .md-footer-links {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 640px) {
   .md-grid-5 { grid-template-columns: 1fr; }
-  .md-topbar { flex-direction: column; }
+  .md-topbar { 
+    flex-direction: row;
+    padding: var(--md-space-2) var(--md-space-3);
+  }
+  
+  .md-shell {
+    padding-top: calc(var(--md-space-3) + 64px);
+  }
+  
+  .md-panel { padding: var(--md-space-2); }
+  
+  .md-button-row {
+    flex-direction: column;
+  }
+  
+  .md-button {
+    width: 100%;
+    text-align: center;
+  }
 }

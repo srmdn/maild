@@ -30,6 +30,7 @@ type Handler struct {
 	webhookTimestampHeader string
 	webhookVerifier        *webhooksig.Verifier
 	logger                 *slog.Logger
+	authHandler            *auth.AuthHandler
 }
 
 func NewHandler(
@@ -41,6 +42,7 @@ func NewHandler(
 	webhookSignatureHeader, webhookTimestampHeader, webhookSigningSecret string,
 	webhookMaxSkew time.Duration,
 	logger *slog.Logger,
+	authHandler *auth.AuthHandler,
 ) *Handler {
 	return &Handler{
 		messages:               messages,
@@ -54,6 +56,7 @@ func NewHandler(
 		webhookTimestampHeader: webhookTimestampHeader,
 		webhookVerifier:        webhooksig.NewVerifier(webhookSigningSecret, webhookMaxSkew),
 		logger:                 logger,
+		authHandler:            authHandler,
 	}
 }
 
@@ -62,8 +65,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		return auth.APIKeyMiddleware(h.apiKeyHeader, h.adminAPIKey, h.operatorAPIKey, next)
 	}
 	withUIAccess := func(next http.HandlerFunc) http.HandlerFunc {
-		if h.appEnv == "development" {
-			return next
+		if h.authHandler != nil {
+			return h.authHandler.RequireAuth(next)
 		}
 		return withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(next))
 	}

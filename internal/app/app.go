@@ -84,6 +84,11 @@ func Run() error {
 	domainService := service.NewDomainService(store, domaincheck.New())
 
 	deps := runtime.NewDependencyState()
+	sessionTTL := 7 * 24 * time.Hour
+	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB, sessionTTL)
+	defer sessionStore.Close()
+	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv)
+
 	apiHandler := api.NewHandler(
 		messageService,
 		domainService,
@@ -97,12 +102,8 @@ func Run() error {
 		cfg.WebhookSigningSecret,
 		cfg.WebhookMaxSkew,
 		logger,
+		authHandler,
 	)
-
-	sessionTTL := 7 * 24 * time.Hour
-	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB, sessionTTL)
-	defer sessionStore.Close()
-	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv)
 
 	publicTemplates := loadPublicTemplates(web.FS)
 	if publicTemplates != nil {
