@@ -17,6 +17,11 @@ import (
 	"github.com/srmdn/maild/internal/store/postgres"
 )
 
+const (
+	standardSessionTTL = 7 * 24 * time.Hour
+	extendedSessionTTL = 30 * 24 * time.Hour
+)
+
 type AuthHandler struct {
 	store          *postgres.Store
 	sessionStore   *SessionStore
@@ -46,6 +51,12 @@ func (h *AuthHandler) SetTemplates(signup, login *template.Template) {
 type signupRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type loginRequest struct {
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 type authResponse struct {
@@ -102,13 +113,13 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := h.sessionStore.Create(r.Context(), user.ID)
+	sessionID, err := h.sessionStore.Create(r.Context(), user.ID, standardSessionTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	h.setSessionCookie(w, sessionID)
+	h.setSessionCookie(w, sessionID, int(standardSessionTTL/time.Second))
 
 	resp := authResponse{
 		User: domain.UserWithWorkspace{
@@ -131,7 +142,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req signupRequest
+	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
@@ -160,13 +171,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := h.sessionStore.Create(r.Context(), user.ID)
+	ttl := standardSessionTTL
+	if req.RememberMe {
+		ttl = extendedSessionTTL
+	}
+
+	sessionID, err := h.sessionStore.Create(r.Context(), user.ID, ttl)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	h.setSessionCookie(w, sessionID)
+	h.setSessionCookie(w, sessionID, int(ttl/time.Second))
 
 	userWithWS, err := h.store.GetUserWorkspace(r.Context(), user.ID)
 	if err != nil {
@@ -253,6 +269,11 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := h.sessionStore.Get(r.Context(), sessionID)
 	if err != nil {
+		if errors.Is(err, ErrSessionExpired) {
+			h.clearSessionCookie(w)
+			writeError(w, http.StatusUnauthorized, "session_expired")
+			return
+		}
 		if errors.Is(err, ErrSessionNotFound) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -282,6 +303,11 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		userID, err := h.sessionStore.Get(r.Context(), sessionID)
 		if err != nil {
+			if errors.Is(err, ErrSessionExpired) {
+				h.clearSessionCookie(w)
+				writeError(w, http.StatusUnauthorized, "session_expired")
+				return
+			}
 			if errors.Is(err, ErrSessionNotFound) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -290,12 +316,19 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		userWithWS, err := h.store.GetUserWorkspace(r.Context(), userID)
+		if err != nil {
+			http.Error(w, "workspace not found", http.StatusUnauthorized)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
+		ctx = context.WithValue(ctx, workspaceIDContextKey, userWithWS.WorkspaceID)
 		next(w, r.WithContext(ctx))
 	}
 }
 
-func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, sessionID string) {
+func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, sessionID string, maxAge int) {
 	cookie := &http.Cookie{
 		Name:     "maild_session",
 		Value:    sessionID,
@@ -303,7 +336,7 @@ func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, sessionID string) 
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(7 * 24 * time.Hour / time.Second),
+		MaxAge:   maxAge,
 	}
 	http.SetCookie(w, cookie)
 }
@@ -345,9 +378,16 @@ func verifyPassword(password, hash string) bool {
 }
 
 const userIDContextKey ctxKey = "user_id"
+const workspaceIDContextKey ctxKey = "workspace_id"
 
 func UserIDFromContext(ctx context.Context) (int64, bool) {
 	v := ctx.Value(userIDContextKey)
+	id, ok := v.(int64)
+	return id, ok
+}
+
+func WorkspaceIDFromContext(ctx context.Context) (int64, bool) {
+	v := ctx.Value(workspaceIDContextKey)
 	id, ok := v.(int64)
 	return id, ok
 }

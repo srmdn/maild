@@ -84,8 +84,7 @@ func Run() error {
 	domainService := service.NewDomainService(store, domaincheck.New())
 
 	deps := runtime.NewDependencyState()
-	sessionTTL := 7 * 24 * time.Hour
-	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB, sessionTTL)
+	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB)
 	defer sessionStore.Close()
 	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv)
 

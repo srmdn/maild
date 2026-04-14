@@ -166,13 +166,14 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.A
 		return
 	}
 
+	workspaceID, _ := auth.WorkspaceIDFromContext(r.Context())
 	data := struct {
 		UserID         int64
 		WorkspaceID    int64
 		OperatorAPIKey string
 	}{
 		UserID:         userID,
-		WorkspaceID:    1,
+		WorkspaceID:    workspaceID,
 		OperatorAPIKey: operatorAPIKey,
 	}
 

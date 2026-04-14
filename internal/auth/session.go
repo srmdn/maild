@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,18 +18,16 @@ var (
 
 type SessionStore struct {
 	redis  *redis.Client
-	ttl    time.Duration
 	prefix string
 }
 
-func NewSessionStore(redisAddr string, redisDB int, sessionTTL time.Duration) *SessionStore {
+func NewSessionStore(redisAddr string, redisDB int) *SessionStore {
 	rc := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 		DB:   redisDB,
 	})
 	return &SessionStore{
 		redis:  rc,
-		ttl:    sessionTTL,
 		prefix: "session:",
 	}
 }
@@ -37,18 +36,21 @@ func (s *SessionStore) Close() error {
 	return s.redis.Close()
 }
 
-func (s *SessionStore) Create(ctx context.Context, userID int64) (string, error) {
+func (s *SessionStore) Create(ctx context.Context, userID int64, ttl time.Duration) (string, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return "", err
 	}
 	key := s.prefix + sessionID
-	err = s.redis.HSet(ctx, key, "user_id", userID).Err()
+	expiresAt := time.Now().Add(ttl).Unix()
+	err = s.redis.HSet(ctx, key,
+		"user_id", userID,
+		"expires_at", expiresAt,
+	).Err()
 	if err != nil {
 		return "", err
 	}
-	err = s.redis.Expire(ctx, key, s.ttl).Err()
-	if err != nil {
+	if err = s.redis.Expire(ctx, key, ttl).Err(); err != nil {
 		return "", err
 	}
 	return sessionID, nil
@@ -56,14 +58,24 @@ func (s *SessionStore) Create(ctx context.Context, userID int64) (string, error)
 
 func (s *SessionStore) Get(ctx context.Context, sessionID string) (int64, error) {
 	key := s.prefix + sessionID
-	userID, err := s.redis.HGet(ctx, key, "user_id").Int64()
+	vals, err := s.redis.HMGet(ctx, key, "user_id", "expires_at").Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return 0, ErrSessionNotFound
-		}
 		return 0, err
 	}
-	_ = s.redis.Expire(ctx, key, s.ttl).Err()
+	if vals[0] == nil {
+		return 0, ErrSessionNotFound
+	}
+	userID, err := strconv.ParseInt(vals[0].(string), 10, 64)
+	if err != nil {
+		return 0, ErrSessionNotFound
+	}
+	if vals[1] != nil {
+		expiresAt, err := strconv.ParseInt(vals[1].(string), 10, 64)
+		if err == nil && time.Now().Unix() > expiresAt {
+			_ = s.redis.Del(ctx, key).Err()
+			return 0, ErrSessionExpired
+		}
+	}
 	return userID, nil
 }
 
