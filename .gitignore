@@ -2,6 +2,14 @@
 .env
 .env.*
 !.env.example
+secrets/
+keys/
+credentials/
+*.pem
+*.key
+*.crt
+*.p8
+config/secrets.yaml
 
 # Go build artifacts
 bin/
@@ -17,6 +25,11 @@ maild
 .vscode/
 *.log
 tmp/
+
+# Database backups and dumps
+*.dump
+*.backup
+*.bak
 
 # Internal strategy docs (do not commit)
 docs/internal/
