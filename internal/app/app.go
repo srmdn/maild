@@ -1,8 +1,8 @@
 package app
 
 import (
-	"context"
-	"errors"
+	"embed"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/srmdn/maild/internal/api"
+	"github.com/srmdn/maild/internal/auth"
 	"github.com/srmdn/maild/internal/config"
 	"github.com/srmdn/maild/internal/crypto"
 	"github.com/srmdn/maild/internal/domaincheck"
@@ -24,6 +25,10 @@ import (
 	"github.com/srmdn/maild/internal/store/postgres"
 	"github.com/srmdn/maild/internal/web"
 	"github.com/srmdn/maild/internal/worker"
+
+	"context"
+	"errors"
+	"html/template"
 )
 
 func Run() error {
@@ -93,7 +98,18 @@ func Run() error {
 		cfg.WebhookMaxSkew,
 		logger,
 	)
-	server := httpserver.New(cfg, logger, deps, apiHandler, web.FS)
+
+	sessionTTL := 7 * 24 * time.Hour
+	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB, sessionTTL)
+	defer sessionStore.Close()
+	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv)
+
+	publicTemplates := loadPublicTemplates(web.FS)
+	if publicTemplates != nil {
+		authHandler.SetTemplates(publicTemplates["signup.html"], publicTemplates["login.html"])
+	}
+
+	server := httpserver.New(cfg, logger, deps, apiHandler, authHandler, web.FS)
 	messageWorker := worker.NewMessageWorker(messageService, logger)
 
 	errCh := make(chan error, 1)
@@ -133,4 +149,24 @@ func Run() error {
 	logger.Info("server stopped", "shutdown_timeout", cfg.ShutdownTimeout.String())
 	time.Sleep(10 * time.Millisecond)
 	return nil
+}
+
+func loadPublicTemplates(staticFS embed.FS) map[string]*template.Template {
+	fsys, err := fs.Sub(staticFS, "templates")
+	if err != nil {
+		return nil
+	}
+
+	result := make(map[string]*template.Template)
+	pages := []string{"landing.html", "user_dashboard.html", "signup.html", "login.html"}
+	for _, page := range pages {
+		tmpl := template.New(page)
+		_, err := tmpl.ParseFS(fsys, page)
+		if err != nil {
+			return nil
+		}
+		result[page] = tmpl
+	}
+
+	return result
 }
