@@ -43,6 +43,12 @@ Most teams end up with ad-hoc scripts plus provider dashboards. That creates bli
 - User-facing auth and dashboard exist.
 - Operator UI exists at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
 
+## Production Profile
+
+- Use [`.env.production.example`](.env.production.example) as the baseline for production deployments.
+- `APP_ENV=production` now enforces strict startup validation and fails fast when required runtime values are missing or still using development defaults.
+- Ownership and rotation expectations are documented in [`deploy/production-config.md`](deploy/production-config.md).
+
 ## Public Roadmap
 
 Roadmap execution is tracked in GitHub milestones/issues:
