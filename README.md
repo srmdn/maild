@@ -330,11 +330,7 @@ Basic anti-abuse controls are enabled:
 
 ## Architecture
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/release-risk-checklist.md](docs/release-risk-checklist.md)
-- [docs/v0.3.0-release-scope.md](docs/v0.3.0-release-scope.md)
-- [docs/PUBLIC-LAUNCH-CHECKLIST.md](docs/PUBLIC-LAUNCH-CHECKLIST.md)
-- [docs/BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md)
+Architecture and operational runbooks are maintained privately by the maintainers.
 
 ## License
 
@@ -346,5 +342,3 @@ GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
 - [AGENTS.md](AGENTS.md)
 - [CLAUDE.md](CLAUDE.md)
 - [SECURITY.md](SECURITY.md)
-- [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md)
-- [docs/release-risk-checklist.md](docs/release-risk-checklist.md)

@@ -49,7 +49,7 @@ Run check manually:
 scripts/check-commit-attribution.sh
 ```
 
-Cleanup runbook: [docs/AI-COMMIT-CLEANUP.md](docs/AI-COMMIT-CLEANUP.md)
+If commit attribution cleanup is needed, use `scripts/check-commit-attribution.sh` and standard interactive rebase/cherry-pick workflows locally.
 
 ## Development Expectations
 
