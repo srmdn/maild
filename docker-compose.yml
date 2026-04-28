@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: maild-postgres
     environment:
       POSTGRES_DB: maild
@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - maild_postgres_data:/var/lib/postgresql/data
+      - maild_postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maild -d maild"]
       interval: 5s
@@ -17,7 +17,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.6.2-alpine
     container_name: maild-redis
     ports:
       - "6379:6379"

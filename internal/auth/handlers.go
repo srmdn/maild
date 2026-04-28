@@ -172,6 +172,20 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userWithWS, err := h.store.GetUserWorkspace(r.Context(), user.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		workspaceName := strings.Split(user.Email, "@")[0] + "'s workspace"
+		if _, createErr := h.store.CreateWorkspaceForUser(r.Context(), user.ID, workspaceName); createErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to initialize workspace")
+			return
+		}
+		userWithWS, err = h.store.GetUserWorkspace(r.Context(), user.ID)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get user workspace")
+		return
+	}
+
 	ttl := standardSessionTTL
 	if req.RememberMe {
 		ttl = extendedSessionTTL
@@ -184,12 +198,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.setSessionCookie(w, sessionID, int(ttl/time.Second))
-
-	userWithWS, err := h.store.GetUserWorkspace(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get user workspace")
-		return
-	}
 
 	resp := authResponse{
 		User:      userWithWS,

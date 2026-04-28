@@ -29,7 +29,7 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (domain.User, 
 	var u domain.User
 	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.User{}, errors.New("user not found")
+		return domain.User{}, sql.ErrNoRows
 	}
 	return u, err
 }
@@ -43,7 +43,7 @@ func (s *Store) GetUserByID(ctx context.Context, id int64) (domain.User, error) 
 	var u domain.User
 	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.User{}, errors.New("user not found")
+		return domain.User{}, sql.ErrNoRows
 	}
 	return u, err
 }
@@ -96,7 +96,7 @@ func (s *Store) GetUserWorkspace(ctx context.Context, userID int64) (domain.User
 	err := row.Scan(&u.ID, &u.Email, &createdAt, &u.WorkspaceID, &u.WorkspaceName, &u.Role)
 	u.CreatedAt = createdAt
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.UserWithWorkspace{}, errors.New("workspace not found for user")
+		return domain.UserWithWorkspace{}, sql.ErrNoRows
 	}
 	return u, err
 }
