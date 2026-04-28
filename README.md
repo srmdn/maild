@@ -1,344 +1,162 @@
 # maild
 
-Lightweight outbound email operations platform.
+Outbound email operations control plane for teams that want reliable sending without heavyweight ESP lock-in.
 
-`maild` focuses on reliable sending workflows for transactional email and simple campaigns:
-- queueing and controlled delivery
-- retries and failure handling
-- suppression and unsubscribe safety
-- domain verification and deliverability checks
-- delivery event logs and webhooks
+## Manifesto
 
-It is not a full mailbox server and does not include IMAP/POP webmail.
+Sending email is easy. Operating email safely at scale is hard.
 
-## Project Status
+`maild` exists to make outbound delivery operations auditable and reliable:
+- queue first, send safely
+- enforce suppression and unsubscribe rules everywhere
+- keep failure handling explicit (retries, replay, incident context)
+- let operators see what happened and act fast
 
-Actively used v0.x control plane:
-- API -> queue -> worker delivery is implemented
-- operator console workflows are available at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`
-- backend-first technical scope (Tracks A/B/C) is complete as of April 3, 2026
-- next focus is frontend product UX for broader operator workflows
+`maild` is intentionally focused. It is not trying to be a full CRM or marketing automation suite.
+
+## What Problem `maild` Solves
+
+Most teams end up with ad-hoc scripts plus provider dashboards. That creates blind spots:
+- retries and rate limits are inconsistent
+- suppression/unsubscribe enforcement is fragile
+- webhook failures are hard to recover from
+- incidents are slow to triage because logs and context are fragmented
+
+`maild` centralizes those concerns in one control plane.
+
+## What `maild` Is (And Is Not)
+
+`maild` is:
+- outbound send orchestration (API -> queue -> worker)
+- SMTP provider control with failover-aware operations
+- policy and compliance safety layer
+- operator console for logs, timeline, and incident workflows
+
+`maild` is not:
+- inbox hosting (no IMAP/POP/webmail)
+- a complete ESP marketing suite (yet)
+
+## Current State (April 28, 2026)
+
+- Stable v0.x control-plane core is implemented.
+- API, queue/worker, retries, safety checks, and signed webhooks are in place.
+- User-facing auth and dashboard exist.
+- Operator UI exists at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
+
+## Public Roadmap
+
+Roadmap execution is tracked in GitHub milestones/issues:
+
+- `v0.6.0` Production hardening baseline
+  - [#14](https://github.com/srmdn/maild/issues/14) tracker
+  - [#15](https://github.com/srmdn/maild/issues/15) production env and config validation
+  - [#16](https://github.com/srmdn/maild/issues/16) deploy baseline and runtime topology
+  - [#17](https://github.com/srmdn/maild/issues/17) preflight release gate
+- `v0.7.0` Campaign composer MVP
+  - [#18](https://github.com/srmdn/maild/issues/18) campaign model and API
+  - [#19](https://github.com/srmdn/maild/issues/19) composer UI + preview + test-send
+- `v0.8.0` Audience builder MVP
+  - [#20](https://github.com/srmdn/maild/issues/20) import pipeline and compliance-aware filtering
+  - [#21](https://github.com/srmdn/maild/issues/21) audience UI and basic segmentation
+- `v0.9.0` Ops and onboarding maturity
+  - [#22](https://github.com/srmdn/maild/issues/22) observability and alerting baseline
+  - [#12](https://github.com/srmdn/maild/issues/12) workspace invitation flow
+  - [#13](https://github.com/srmdn/maild/issues/13) design partner onboarding program
+- `v1.0.0` GA release gate
+  - [#23](https://github.com/srmdn/maild/issues/23) full end-to-end QA matrix
 
 ## Stack
 
 - Go (`cmd/server`, `internal/*`)
 - PostgreSQL
 - Redis
-- Server-rendered/web-first direction (no Node build chain)
+- Server-rendered web UI (no Node build chain)
 
 ## Quick Start
 
-1. Bootstrap local development in one command:
+1. Bootstrap development:
 
 ```sh
 make setup
 ```
 
-2. Run the app:
+2. Run server:
 
 ```sh
 make run
 ```
 
-At startup, `maild` applies embedded `up` migrations automatically.
-
-3. Check health:
+3. Health check:
 
 ```sh
 curl -sS http://localhost:8080/healthz
 ```
 
-4. Open Mailpit UI (local SMTP inbox):
+4. Local SMTP inbox (Mailpit):
 
 ```text
 http://localhost:8025
 ```
 
-## Current Endpoints
+## Core API Surface
 
-- `GET /`
-- `GET /healthz`
-- `GET /readyz`
 - `POST /v1/messages`
 - `POST /v1/messages/retry`
-- `GET /v1/ops/onboarding-checklist`
-- `GET /v1/incidents/bundle`
-- `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
+- `POST /v1/webhooks/events`
 - `GET /v1/webhooks/logs`
 - `POST /v1/webhooks/replay`
+- `POST /v1/smtp-accounts`
 - `GET /v1/smtp-accounts/list`
 - `POST /v1/smtp-accounts/activate`
 - `GET/POST /v1/workspaces/policy`
-- `GET /ui/policy`
+- `GET /v1/messages/logs`
+- `GET /v1/messages/timeline`
+- `GET /v1/incidents/bundle`
+
+User/auth routes:
+- `GET /`
+- `GET/POST /signup`
+- `GET/POST /login`
+- `GET /dashboard`
+
+Operator routes:
 - `GET /ui`
+- `GET /ui/logs`
 - `GET /ui/onboarding`
 - `GET /ui/incidents`
-- `GET /v1/analytics/summary`
-- `GET /v1/analytics/export.csv`
-- `GET /v1/billing/metering`
-- `GET /ui/logs` (operator console: logs/timeline, queue-state summary, domain readiness, suppression tools)
+- `GET /ui/policy`
 
-Example:
+## Security And Safety Defaults
 
-```sh
-curl -sS -X POST http://localhost:8080/v1/messages \
-  -H "X-API-Key: change-me-operator" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "from_email": "noreply@example.test",
-    "to_email": "user@example.test",
-    "subject": "Hello from maild",
-    "body_text": "maild first delivery test"
-  }'
-```
+- API key auth for `/v1/*`
+- role separation (`admin` vs `operator`)
+- encrypted SMTP credentials at rest (AES-GCM)
+- workspace/domain rate limits
+- blocked-recipient domain policy
+- suppression and unsubscribe enforcement
+- signed webhook verification (when enabled)
 
-Admin-only suppression example:
+## Verification
+
+Before merging:
 
 ```sh
-curl -sS -X POST http://localhost:8080/v1/suppressions \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "email": "user@example.test",
-    "reason": "manual block"
-  }'
+make verify
 ```
 
-Admin-only unsubscribe example:
+For a security-inclusive local pass:
 
 ```sh
-curl -sS -X POST http://localhost:8080/v1/unsubscribes \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "email": "user@example.test",
-    "reason": "user clicked unsubscribe"
-  }'
+make verify-full
 ```
 
-Domain readiness check example (SPF/DKIM/DMARC):
-
-```sh
-curl -sS -X POST http://localhost:8080/v1/domains/readiness \
-  -H "X-API-Key: change-me-operator" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "domain": "example.test",
-    "dkim_selector": "default"
-  }'
-```
-
-Admin-only encrypted SMTP account config:
-
-```sh
-curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "name": "primary-smtp",
-    "host": "smtp.example.com",
-    "port": 587,
-    "username": "user@example.test",
-    "password": "secret",
-    "from_email": "noreply@example.test"
-  }'
-```
-
-Admin-only SMTP provider validation:
-
-```sh
-curl -sS -X POST http://localhost:8080/v1/smtp-accounts/validate \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{"workspace_id":1}'
-```
-
-SMTP account list and manual active-provider switch:
-
-```sh
-curl -sS "http://localhost:8080/v1/smtp-accounts/list?workspace_id=1" \
-  -H "X-API-Key: change-me-operator"
-
-curl -sS -X POST http://localhost:8080/v1/smtp-accounts/activate \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{"workspace_id":1,"name":"primary-smtp"}'
-```
-
-Operator message logs view:
-
-```sh
-curl -sS "http://localhost:8080/v1/messages/logs?workspace_id=1&limit=20" \
-  -H "X-API-Key: change-me-operator"
-```
-
-Operator message timeline view:
-
-```sh
-curl -sS "http://localhost:8080/v1/messages/timeline?message_id=1" \
-  -H "X-API-Key: change-me-operator"
-```
-
-Operator controlled retry:
-
-```sh
-curl -sS -X POST http://localhost:8080/v1/messages/retry \
-  -H "X-API-Key: change-me-operator" \
-  -H "Content-Type: application/json" \
-  -d '{"workspace_id":1,"message_ids":[1]}'
-```
-
-Technical onboarding checklist:
-
-```sh
-curl -sS "http://localhost:8080/v1/ops/onboarding-checklist?workspace_id=1&domain=example.test&dkim_selector=default" \
-  -H "X-API-Key: change-me-operator"
-```
-
-Incident bundle export (timeline, attempts, webhook outcomes):
-
-```sh
-curl -sS "http://localhost:8080/v1/incidents/bundle?workspace_id=1&message_id=1" \
-  -H "X-API-Key: change-me-operator"
-```
-
-Provider webhook event ingest (signature required):
-
-```sh
-body='{"workspace_id":1,"type":"bounce","email":"user@example.test","reason":"hard_bounce"}'
-ts="$(date +%s)"
-sig="$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SIGNING_SECRET" -hex | sed 's/^.* //')"
-
-curl -sS -X POST http://localhost:8080/v1/webhooks/events \
-  -H "Content-Type: application/json" \
-  -H "X-Webhook-Timestamp: $ts" \
-  -H "X-Webhook-Signature: v1=$sig" \
-  -d "$body"
-```
-
-Webhook payload compatibility:
-- single event object (`workspace_id`, `type`/`event`, `email`/`recipient`, optional `reason`)
-- event arrays (for provider batch delivery)
-- common provider aliases map to internal types: `bounce`, `complaint`, `unsubscribe`
-
-For mixed batches, the API returns `processed_count` and `rejected_count`.
-
-Webhook reliability behavior:
-- each webhook apply action uses bounded retries (`WEBHOOK_APPLY_MAX_ATTEMPTS`)
-- malformed/unsupported streams are persisted as dead-letter webhook events for audit
-
-Provider failover behavior:
-- manual switch via `POST /v1/smtp-accounts/activate`
-- automatic switch to standby account when active provider repeatedly fails (`AUTO_FAILOVER_*` settings)
-
-Operator webhook logs view:
-
-```sh
-curl -sS "http://localhost:8080/v1/webhooks/logs?workspace_id=1&limit=20&status=dead_letter" \
-  -H "X-API-Key: change-me-operator"
-```
-
-Tenant policy controls:
-
-```sh
-curl -sS "http://localhost:8080/v1/workspaces/policy?workspace_id=1" \
-  -H "X-API-Key: change-me-operator"
-
-curl -sS -X POST http://localhost:8080/v1/workspaces/policy \
-  -H "X-API-Key: change-me-admin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": 1,
-    "rate_limit_workspace_per_hour": 600,
-    "rate_limit_domain_per_hour": 250,
-    "blocked_recipient_domains": ["mailinator.com", "tempmail.com"]
-  }'
-```
-
-Policy UI:
-
-```text
-http://localhost:8080/ui/policy?workspace_id=1
-```
-
-Operator logs UI:
-
-```text
-http://localhost:8080/ui/logs?workspace_id=1
-```
-
-Operator dashboard UI:
-
-```text
-http://localhost:8080/ui?workspace_id=1
-```
-
-Operator onboarding UI:
-
-```text
-http://localhost:8080/ui/onboarding?workspace_id=1
-```
-
-Operator incidents UI:
-
-```text
-http://localhost:8080/ui/incidents?workspace_id=1
-```
-
-`/ui/logs` capabilities:
-- queue-state snapshot from recent message logs (`queued/sending/sent/failed/suppressed`)
-- timeline drill-down and controlled message retry by message ID
-- domain readiness check (SPF/DKIM/DMARC) via existing API
-- suppression/unsubscribe quick actions (requires admin API key for those writes)
-- webhook dead-letter view and replay controls
-- saved filter presets for `failed`, `suppressed`, and `dead_letter` views
-- time-range filtering (`from`/`to`) for message logs and webhook logs
-- bulk retry/replay actions with per-item outcomes
-- technical onboarding checklist workflow (optional domain readiness check)
-- incident bundle export flow for message timeline, attempts, and webhook outcomes
-
-Analytics/export and billing metering:
-
-```sh
-curl -sS "http://localhost:8080/v1/analytics/summary?workspace_id=1" \
-  -H "X-API-Key: change-me-operator"
-
-curl -sS "http://localhost:8080/v1/analytics/export.csv?workspace_id=1&limit=1000" \
-  -H "X-API-Key: change-me-operator"
-
-curl -sS "http://localhost:8080/v1/billing/metering?workspace_id=1" \
-  -H "X-API-Key: change-me-operator"
-```
-
-`/v1/*` endpoints require API key authentication using:
-- `API_KEY_HEADER`
-- `ADMIN_API_KEY`
-- `OPERATOR_API_KEY`
-
-SMTP account credentials saved through API are encrypted at rest in PostgreSQL using AES-GCM (`ENCRYPTION_KEY_BASE64`).
-
-Basic anti-abuse controls are enabled:
-- hourly workspace rate limit (`RATE_LIMIT_WORKSPACE_PER_HOUR`)
-- hourly recipient-domain rate limit (`RATE_LIMIT_DOMAIN_PER_HOUR`)
-- blocked recipient domain list (`BLOCKED_RECIPIENT_DOMAINS`)
-- signed webhook verification with replay window (`WEBHOOK_*` config, when enabled)
-
-## Architecture
-
-Architecture and operational runbooks are maintained privately by the maintainers.
-
-## License
-
-GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
-
-## Governance Docs
+## Governance
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AGENTS.md](AGENTS.md)
 - [CLAUDE.md](CLAUDE.md)
 - [SECURITY.md](SECURITY.md)
+
+## License
+
+GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
