@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"strconv"
 	"strings"
@@ -14,13 +15,15 @@ const (
 	defaultAPIKeyHeader     = "X-API-Key"
 	defaultAdminAPIKey      = "change-me-admin"
 	defaultOperatorAPIKey   = "change-me-operator"
-	defaultEncryptionKeyB64 = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+	defaultEncryptionKeyRaw = "maild-dev-encryption-key-0000000"
 	defaultPostgresDSN      = "postgres://maild:maild@localhost:5432/maild?sslmode=disable"
 	defaultRedisAddr        = "localhost:6379"
 	defaultSMTPHost         = "localhost"
 	defaultSMTPPort         = 1025
 	defaultSMTPFrom         = "noreply@maild.local"
 )
+
+var defaultEncryptionKeyB64 = base64.StdEncoding.EncodeToString([]byte(defaultEncryptionKeyRaw))
 
 type Config struct {
 	AppEnv                    string
@@ -218,7 +221,7 @@ func validateProductionConfig(c Config) error {
 	if c.OperatorAPIKey == defaultOperatorAPIKey {
 		return ErrInvalidConfig("OPERATOR_API_KEY must not use development default when APP_ENV=production")
 	}
-	if c.EncryptionKeyB64 == defaultEncryptionKeyB64 {
+	if usesDevelopmentEncryptionKey(c.EncryptionKeyB64) {
 		return ErrInvalidConfig("ENCRYPTION_KEY_BASE64 must not use development default when APP_ENV=production")
 	}
 	if c.PostgresDSN == defaultPostgresDSN {
@@ -252,6 +255,10 @@ func envFallbackString(isProduction bool, developmentFallback string) string {
 		return ""
 	}
 	return developmentFallback
+}
+
+func usesDevelopmentEncryptionKey(value string) bool {
+	return value == defaultEncryptionKeyB64
 }
 
 func envFallbackInt(isProduction bool, developmentFallback int) int {

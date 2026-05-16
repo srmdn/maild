@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -115,9 +116,9 @@ func resetConfigEnv(t *testing.T) {
 
 func setValidProductionRuntimeEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("ADMIN_API_KEY", "prod-admin-key-123")
-	t.Setenv("OPERATOR_API_KEY", "prod-operator-key-456")
-	t.Setenv("ENCRYPTION_KEY_BASE64", "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0NTY3ODkwMTI=")
+	t.Setenv("ADMIN_API_KEY", "admin-key")
+	t.Setenv("OPERATOR_API_KEY", "operator-key")
+	t.Setenv("ENCRYPTION_KEY_BASE64", base64.StdEncoding.EncodeToString([]byte("prod-test-encryption-key-0000000")))
 	t.Setenv("POSTGRES_DSN", "postgres://maild:supersecure@db.internal:5432/maild?sslmode=require")
 	t.Setenv("REDIS_ADDR", "redis.internal:6379")
 	t.Setenv("SMTP_HOST", "smtp.internal")
