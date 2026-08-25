@@ -13,6 +13,7 @@ Applies to all contributions (human-authored and AI-assisted).
 3. Keep changes small, traceable, and reversible.
 4. Do not include AI branding or AI co-author trailers in commit messages.
 5. Never paste production secrets, customer data, or private keys into external AI tools.
+6. If requirements are unclear, ask one concise question instead of guessing high-risk behavior.
 
 ## Email-System Specific Expectations
 
