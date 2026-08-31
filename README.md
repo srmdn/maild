@@ -160,7 +160,6 @@ make verify-full
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AGENTS.md](AGENTS.md)
-- [CLAUDE.md](CLAUDE.md)
 - [SECURITY.md](SECURITY.md)
 
 ## License
