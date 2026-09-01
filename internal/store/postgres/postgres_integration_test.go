@@ -65,6 +65,13 @@ func TestStoreSuppressionsAndUnsubscribes(t *testing.T) {
 	if err := store.AddSuppression(ctx, 1, "a@x.com", "other"); err != nil {
 		t.Fatal(err)
 	}
+	// matching is case-insensitive regardless of stored casing
+	if err := store.AddSuppression(ctx, 1, "MIXED@x.com", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.IsSuppressed(ctx, 1, "mixed@x.com"); !ok {
+		t.Fatal("expected suppression match to be case-insensitive")
+	}
 
 	if ok, _ := store.IsUnsubscribed(ctx, 1, "b@x.com"); ok {
 		t.Fatal("expected not unsubscribed initially")
