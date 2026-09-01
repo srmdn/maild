@@ -68,7 +68,7 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 		if err != nil {
 			logger.Warn("public template loading failed", "err", err)
 		} else {
-			indexTemplate = tmpl["landing.html"]
+			indexTemplate = tmpl["landing_v2.html"]
 			dashboardTemplate = tmpl["user_dashboard.html"]
 			logger.Info("public templates loaded successfully")
 		}
@@ -104,7 +104,7 @@ func loadPublicTemplates(staticFS fs.FS) (map[string]*template.Template, error) 
 
 	result := make(map[string]*template.Template)
 
-	pages := []string{"landing.html", "user_dashboard.html", "signup.html", "login.html"}
+	pages := []string{"landing_v2.html", "user_dashboard.html", "signup.html", "login.html"}
 	for _, page := range pages {
 		tmpl := template.New(page)
 		_, err := tmpl.ParseFS(fsys, page)

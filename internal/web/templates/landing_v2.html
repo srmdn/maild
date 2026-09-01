@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>maild | Outbound Email Control Plane</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    :root {
+      --lp-kicker: var(--md-accent);
+      --lp-hairline: var(--md-border);
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--md-bg);
+      color: var(--md-text);
+      font-family: var(--md-font-sans);
+      margin: 0;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    /* subtle paper-grid background */
+    .lp-page {
+      background-image:
+        linear-gradient(var(--md-border-light) 1px, transparent 1px),
+        linear-gradient(90deg, var(--md-border-light) 1px, transparent 1px);
+      background-size: 44px 44px;
+      background-position: -1px -1px;
+      position: relative;
+    }
+    .lp-page::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      opacity: .05;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    }
+
+    .lp-shell { max-width: 1200px; margin: 0 auto; padding: 0 var(--md-space-4); }
+
+    /* ---------- TOPBAR ---------- */
+    .lp-topbar {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--md-surface);
+      border-bottom: 3px solid var(--md-border);
+    }
+    .lp-topbar-inner {
+      display: flex; align-items: center; justify-content: space-between; gap: var(--md-space-3);
+      padding: var(--md-space-3) var(--md-space-4);
+    }
+    .lp-brand {
+      font-family: var(--md-font-mono);
+      font-weight: 800; font-size: 1.6rem; letter-spacing: -0.02em;
+      text-transform: uppercase; color: var(--md-text); text-decoration: none;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .lp-brand::before { content: ""; width: 14px; height: 14px; background: var(--md-accent); display: inline-block; }
+    .lp-nav { display: flex; align-items: center; gap: var(--md-space-2); }
+    .lp-nav a.lp-link { text-decoration: none; color: var(--md-text); font-size: .9rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 8px 4px; }
+    .lp-nav a.lp-link:hover { color: var(--md-accent); }
+    .lp-btn {
+      text-decoration: none; font-weight: 800; font-size: .85rem; text-transform: uppercase; letter-spacing: .04em;
+      padding: 12px 20px; border: 2px solid var(--md-border); border-radius: 0; background: var(--md-text); color: var(--md-surface);
+      box-shadow: 4px 4px 0 var(--md-border); transition: transform .08s, box-shadow .08s, background .15s;
+    }
+    .lp-btn:hover { background: var(--md-accent); border-color: var(--md-accent); color: var(--md-accent-ink); }
+    .lp-btn:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 var(--md-border); }
+    .lp-btn--accent { background: var(--md-accent); border-color: var(--md-accent); color: var(--md-accent-ink); }
+    .lp-btn--ghost { background: var(--md-surface); color: var(--md-text); }
+    .lp-toggle { display: none; background: none; border: 2px solid var(--md-border); font-size: 1.3rem; padding: 4px 12px; cursor: pointer; }
+
+    /* ---------- MARQUEE ---------- */
+    .lp-marquee { border-top: 2px solid var(--md-border); border-bottom: 2px solid var(--md-border); background: var(--md-text); color: var(--md-surface); overflow: hidden; }
+    .lp-marquee-track { display: flex; gap: 0; white-space: nowrap; animation: lp-scroll 28s linear infinite; width: max-content; }
+    .lp-marquee-track span { font-family: var(--md-font-mono); text-transform: uppercase; letter-spacing: .1em; font-size: .85rem; padding: var(--md-space-2) var(--md-space-4); display: inline-flex; align-items: center; gap: var(--md-space-3); }
+    .lp-marquee-track span::after { content: "●"; color: var(--md-accent); }
+    @keyframes lp-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+    /* ---------- HERO ---------- */
+    .lp-hero { padding: calc(var(--md-space-5) + 24px) 0 var(--md-space-5); }
+    .lp-kicker { color: var(--md-kicker); font-family: var(--md-font-mono); font-size: .82rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 var(--md-space-3); }
+    .lp-hero-grid { display: grid; grid-template-columns: 1.2fr .9fr; gap: var(--md-space-5); align-items: center; }
+    .lp-title { font-size: clamp(3rem, 7vw, 5.6rem); font-weight: 900; line-height: .95; letter-spacing: -0.035em; text-transform: uppercase; margin: 0 0 var(--md-space-3); }
+    .lp-title .hl { color: var(--md-accent); position: relative; display: inline-block; }
+    .lp-title .hl::after { content: ""; position: absolute; left: 0; right: 0; bottom: 6px; height: 8px; background: var(--md-accent); z-index: -1; opacity: .18; }
+    .lp-sub { font-size: 1.18rem; color: var(--md-muted); max-width: 540px; margin: 0 0 var(--md-space-4); }
+    .lp-cta-row { display: flex; gap: var(--md-space-3); flex-wrap: wrap; }
+    .lp-hero-foot { display: flex; gap: var(--md-space-4); margin-top: var(--md-space-4); color: var(--md-muted); font-family: var(--md-font-mono); font-size: .8rem; flex-wrap: wrap; }
+    .lp-hero-foot b { color: var(--md-text); }
+
+    /* pipeline diagram */
+    .lp-diagram { position: relative; }
+    .lp-diagram .lp-pipe { display: grid; gap: var(--md-space-3); }
+    .lp-node {
+      border: 2px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-3);
+      box-shadow: 6px 6px 0 var(--md-border); position: relative; transform: translateX(0);
+      transition: transform .12s, box-shadow .12s;
+    }
+    .lp-node:hover { transform: translate(-2px,-2px); box-shadow: 8px 8px 0 var(--md-accent); }
+    .lp-node-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .lp-node-tag { font-family: var(--md-font-mono); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--md-accent); }
+    .lp-node-no { font-family: var(--md-font-mono); font-size: .72rem; color: var(--md-muted); }
+    .lp-node-title { font-weight: 800; text-transform: uppercase; letter-spacing: .02em; font-size: 1rem; margin: 0; }
+    .lp-node-desc { color: var(--md-muted); font-size: .86rem; margin: 0; }
+    .lp-pipe-arrow { text-align: center; color: var(--md-muted); font-family: var(--md-font-mono); font-size: 1.2rem; line-height: 1; }
+
+    /* ---------- SECTION HEADS ---------- */
+    .lp-section { border-top: 3px solid var(--md-border); padding: var(--md-space-5) 0; }
+    .lp-section-head { margin-bottom: var(--md-space-4); }
+    .lp-section-head .lp-kicker { margin-bottom: 8px; }
+    .lp-section-head h2 { font-size: clamp(1.9rem, 4vw, 3rem); font-weight: 900; text-transform: uppercase; letter-spacing: -0.03em; margin: 0; }
+    .lp-section-head p { color: var(--md-muted); max-width: 640px; margin: var(--md-space-2) 0 0; }
+
+    /* ---------- FEATURES ---------- */
+    .lp-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--md-space-3); }
+    .lp-feature {
+      border: 2px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-4);
+      box-shadow: 5px 5px 0 var(--md-border); display: flex; flex-direction: column; gap: var(--md-space-2);
+      transition: transform .12s, box-shadow .12s;
+    }
+    .lp-feature:hover { transform: translate(-2px,-2px); box-shadow: 7px 7px 0 var(--md-accent); }
+    .lp-feature .lp-f-no { font-family: var(--md-font-mono); color: var(--md-accent); font-weight: 700; font-size: .8rem; }
+    .lp-feature h3 { font-size: 1.15rem; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+    .lp-feature p { color: var(--md-muted); font-size: .9rem; margin: 0; }
+
+    /* ---------- PIPELINE BAND ---------- */
+    .lp-band { background: var(--md-text); color: var(--md-surface); }
+    .lp-band .lp-section-head h2 { color: var(--md-surface); }
+    .lp-band .lp-section-head p { color: rgba(242,238,233,.7); }
+    .lp-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--md-space-3); }
+    .lp-step { border: 2px solid var(--md-accent); padding: var(--md-space-3); position: relative; }
+    .lp-step .lp-step-no { font-family: var(--md-font-mono); color: var(--md-accent); font-size: .75rem; font-weight: 700; text-transform: uppercase; }
+    .lp-step h4 { font-size: 1rem; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; margin: 8px 0 6px; }
+    .lp-step p { font-size: .85rem; color: rgba(242,238,233,.75); margin: 0; }
+
+    /* ---------- METRICS ---------- */
+    .lp-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--md-space-3); }
+    .lp-metric { border: 2px solid var(--md-border); background: var(--md-surface-2); padding: var(--md-space-4); border-top: 6px solid var(--md-accent); }
+    .lp-metric .val { font-size: 2.4rem; font-weight: 900; letter-spacing: -0.03em; line-height: 1; }
+    .lp-metric .lab { color: var(--md-muted); font-size: .85rem; margin-top: 8px; text-transform: uppercase; letter-spacing: .04em; }
+
+    /* ---------- PRICING ---------- */
+    .lp-pricing { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--md-space-3); }
+    .lp-price { border: 2px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-4); display: flex; flex-direction: column; box-shadow: 5px 5px 0 var(--md-border); position: relative; }
+    .lp-price--feat { border: 3px solid var(--md-accent); box-shadow: 7px 7px 0 var(--md-accent); transform: translateY(-6px); }
+    .lp-price-tier { font-family: var(--md-font-mono); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--md-muted); }
+    .lp-price--feat .lp-price-tier { color: var(--md-accent); }
+    .lp-price .amt { font-size: 2.8rem; font-weight: 900; letter-spacing: -0.03em; margin: var(--md-space-2) 0; }
+    .lp-price .amt small { font-size: .95rem; font-weight: 500; color: var(--md-muted); }
+    .lp-price .desc { color: var(--md-muted); font-size: .9rem; margin: 0 0 var(--md-space-3); }
+    .lp-price ul { list-style: none; padding: 0; margin: 0 0 var(--md-space-4); }
+    .lp-price li { padding: 9px 0; border-bottom: 1px solid var(--md-border-light); font-size: .9rem; display: flex; align-items: center; gap: 8px; }
+    .lp-price li::before { content: "▸"; color: var(--md-accent); font-weight: 700; }
+    .lp-price .lp-btn { text-align: center; margin-top: auto; }
+    .lp-flag { position: absolute; top: -14px; right: 14px; background: var(--md-accent); color: var(--md-accent-ink); font-family: var(--md-font-mono); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 4px 10px; }
+
+    /* ---------- CTA BAND ---------- */
+    .lp-cta-band { background: var(--md-accent); color: var(--md-accent-ink); padding: var(--md-space-5) 0; border-top: 3px solid var(--md-border); }
+    .lp-cta-band-inner { display: flex; align-items: center; justify-content: space-between; gap: var(--md-space-4); flex-wrap: wrap; }
+    .lp-cta-band h2 { font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 900; text-transform: uppercase; letter-spacing: -0.03em; margin: 0; }
+    .lp-cta-band p { margin: var(--md-space-2) 0 0; color: rgba(255,255,255,.85); font-size: 1rem; }
+
+    /* ---------- FOOTER ---------- */
+    .lp-footer { border-top: 3px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-4) 0; }
+    .lp-footer-inner { max-width: 1200px; margin: 0 auto; padding: 0 var(--md-space-4); display: flex; justify-content: space-between; align-items: center; gap: var(--md-space-3); flex-wrap: wrap; }
+    .lp-footer-brand { font-family: var(--md-font-mono); font-weight: 800; text-transform: uppercase; font-size: 1.1rem; }
+    .lp-footer-links { display: flex; gap: var(--md-space-3); }
+    .lp-footer-links a { color: var(--md-muted); text-decoration: none; font-size: .85rem; font-family: var(--md-font-mono); }
+    .lp-footer-links a:hover { color: var(--md-text); }
+    .lp-footer-mono { font-family: var(--md-font-mono); color: var(--md-muted); font-size: .8rem; }
+
+    /* reveal-on-scroll */
+    .lp-reveal { opacity: 0; transform: translateY(18px); transition: opacity .5s ease, transform .5s ease; }
+    .lp-reveal.in { opacity: 1; transform: none; }
+
+    /* responsive */
+    @media (max-width: 920px) {
+      .lp-hero-grid { grid-template-columns: 1fr; }
+      .lp-features { grid-template-columns: repeat(2, 1fr); }
+      .lp-steps,.lp-metrics { grid-template-columns: repeat(2, 1fr); }
+      .lp-pricing { grid-template-columns: 1fr; }
+      .lp-price--feat { transform: none; }
+      .lp-nav { display: none; position: fixed; inset: 0; top: 60px; background: var(--md-surface); flex-direction: column; align-items: stretch; padding: var(--md-space-4); gap: var(--md-space-2); z-index: 60; }
+      .lp-nav.open { display: flex; }
+      .lp-nav a.lp-link { font-size: 1.2rem; padding: var(--md-space-3) 0; border-bottom: 1px solid var(--md-border-light); }
+      .lp-toggle { display: block; }
+    }
+    @media (max-width: 560px) {
+      .lp-features,.lp-steps,.lp-metrics { grid-template-columns: 1fr; }
+      .lp-shell { padding: 0 var(--md-space-3); }
+    }
+  </style>
+</head>
+<body>
+  <div class="lp-page">
+
+    <header class="lp-topbar">
+      <div class="lp-topbar-inner lp-shell" style="max-width:none;padding-left:var(--md-space-4);padding-right:var(--md-space-4);">
+        <a href="/" class="lp-brand">maild</a>
+        <button class="lp-toggle" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+        <nav class="lp-nav" id="lpNav">
+          <a class="lp-link" href="#features">Features</a>
+          <a class="lp-link" href="#how">How it works</a>
+          <a class="lp-link" href="#pricing">Pricing</a>
+          <a class="lp-link" href="/login">Log in</a>
+          <a class="lp-btn lp-btn--accent" href="/signup">Get Started</a>
+        </nav>
+      </div>
+    </header>
+
+    <div class="lp-marquee" aria-hidden="true">
+      <div class="lp-marquee-track" id="marquee">
+        <span>Queue first</span><span>Bounded retries</span><span>Auto-failover</span><span>Suppression guards</span><span>Signed webhooks</span><span>Domain readiness</span><span>BYO-SMTP</span><span>API-first</span>
+      </div>
+    </div>
+
+    <main class="lp-shell">
+      <section class="lp-hero">
+        <p class="lp-kicker">SendGrid / Mailgun alternative</p>
+        <div class="lp-hero-grid">
+          <div>
+            <h1 class="lp-title">Own the pipe behind your <span class="hl">email</span></h1>
+            <p class="lp-sub">A self-hosted outbound email control plane. Bring your own SMTP, and let maild handle the queue, retries, safety rails, and observability — so your email actually lands.</p>
+            <div class="lp-cta-row">
+              <a href="/signup" class="lp-btn lp-btn--accent">Start Free</a>
+              <a href="/login" class="lp-btn lp-btn--ghost">View Operator Console</a>
+            </div>
+            <div class="lp-hero-foot">
+              <span><b>Deploy</b> docker</span>
+              <span><b>Data</b> yours</span>
+              <span><b>Protocol</b> REST + Webhooks</span>
+            </div>
+          </div>
+
+          <div class="lp-diagram lp-reveal">
+            <div class="lp-pipe">
+              <div class="lp-node">
+                <div class="lp-node-head"><span class="lp-node-tag">01 / Ingest</span><span class="lp-node-no">POST /v1/messages</span></div>
+                <p class="lp-node-title">Your App</p>
+                <p class="lp-node-desc">Call the API with an API key. Done.</p>
+              </div>
+              <div class="lp-pipe-arrow">&#9660;</div>
+              <div class="lp-node">
+                <div class="lp-node-head"><span class="lp-node-tag">02 / Hold</span><span class="lp-node-no">redis queue</span></div>
+                <p class="lp-node-title">Queue</p>
+                <p class="lp-node-desc">Rate-limited, deduplicated, replayable.</p>
+              </div>
+              <div class="lp-pipe-arrow">&#9660;</div>
+              <div class="lp-node">
+                <div class="lp-node-head"><span class="lp-node-tag">03 / Send</span><span class="lp-node-no">worker + fallback</span></div>
+                <p class="lp-node-title">Worker → Relay</p>
+                <p class="lp-node-desc">Retries with backoff; failover to a standby provider.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <section class="lp-section" id="features">
+      <div class="lp-shell">
+        <div class="lp-section-head lp-reveal">
+          <p class="lp-kicker">The control plane</p>
+          <h2>Serious delivery, without the ESP lock-in</h2>
+          <p>Everything between your code and the recipient's inbox — built to be auditable and reliable, not a black box.</p>
+        </div>
+        <div class="lp-features">
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">01</span><h3>Bounded Retries</h3><p>Configurable attempts with exponential backoff. Retries are scheduled, never blocking your pipeline.</p></article>
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">02</span><h3>Auto-Failover</h3><p>Flips to a standby SMTP provider when the active one starts failing repeatedly.</p></article>
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">03</span><h3>Suppression Guards</h3><p>Bounce, complaint, and unsubscribe are enforced on the way out — your reputation stays clean.</p></article>
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">04</span><h3>Signed Webhooks</h3><p>Delivery events with dead-letter handling and replay. Verify every payload.</p></article>
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">05</span><h3>Domain Readiness</h3><p>SPF, DKIM, and DMARC checks before you send. Catch config issues early.</p></article>
+          <article class="lp-feature lp-reveal"><span class="lp-f-no">06</span><h3>You Own the Creds</h3><p>SMTP credentials encrypted at rest. API-first. No vendor scanning your mail.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-section lp-band" id="how">
+      <div class="lp-shell">
+        <div class="lp-section-head lp-reveal">
+          <p class="lp-kicker" style="color:var(--md-accent);">How it works</p>
+          <h2>From API call to inbox, in four steps</h2>
+          <p>One place to control and supervise every send — instead of scattered scripts and provider dashboards.</p>
+        </div>
+        <div class="lp-steps">
+          <div class="lp-step lp-reveal"><span class="lp-step-no">Step 1</span><h4>Enqueues</h4><p>Your app posts a message. It's validated, rate-limited, and queued.</p></div>
+          <div class="lp-step lp-reveal"><span class="lp-step-no">Step 2</span><h4>Checks</h4><p>Suppression, unsubscribe, and blocked-domain rules are applied before dispatch.</p></div>
+          <div class="lp-step lp-reveal"><span class="lp-step-no">Step 3</span><h4>Relays</h4><p>A worker sends via your SMTP, retrying with backoff and failing over when needed.</p></div>
+          <div class="lp-step lp-reveal"><span class="lp-step-no">Step 4</span><h4>Observes</h4><p>Timeline, logs, incident bundles, and webhooks tell you exactly what happened.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-section">
+      <div class="lp-shell">
+        <div class="lp-metrics">
+          <div class="lp-metric lp-reveal"><div class="val">3</div><div class="lab">Max attempts / message</div></div>
+          <div class="lp-metric lp-reveal"><div class="val">100%</div><div class="lab">Supplier enforcement</div></div>
+          <div class="lp-metric lp-reveal"><div class="val">24/7</div><div class="lab">Observable timeline</div></div>
+          <div class="lp-metric lp-reveal"><div class="val">0</div><div class="lab">Vendor lock-in</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-section" id="pricing">
+      <div class="lp-shell">
+        <div class="lp-section-head lp-reveal">
+          <p class="lp-kicker">Pricing</p>
+          <h2>Simple, transparent, yours</h2>
+          <p>Self-hosted. The only thing you pay for is the SMTP relays you already trust.</p>
+        </div>
+        <div class="lp-pricing">
+          <div class="lp-price lp-reveal">
+            <span class="lp-price-tier">Starter</span>
+            <div class="amt">Free</div>
+            <p class="desc">Small projects &amp; prototypes</p>
+            <ul><li>1 workspace</li><li>10k emails / mo</li><li>1 SMTP provider</li><li>7-day logs</li></ul>
+            <a href="/signup" class="lp-btn lp-btn--ghost">Get Started</a>
+          </div>
+          <div class="lp-price lp-price--feat lp-reveal">
+            <span class="lp-flag">Most popular</span>
+            <span class="lp-price-tier">Pro</span>
+            <div class="amt">$29<small>/mo</small></div>
+            <p class="desc">Growing teams</p>
+            <ul><li>5 workspaces</li><li>100k emails / mo</li><li>3 SMTP providers</li><li>90-day logs</li></ul>
+            <a href="/signup" class="lp-btn lp-btn--accent">Start Free Trial</a>
+          </div>
+          <div class="lp-price lp-reveal">
+            <span class="lp-price-tier">Enterprise</span>
+            <div class="amt">Custom</div>
+            <p class="desc">High-volume senders</p>
+            <ul><li>Unlimited workspaces</li><li>Failover &amp; balancing</li><li>1-year retention</li><li>Dedicated support</li></ul>
+            <a href="mailto:hello@malld.click" class="lp-btn lp-btn--ghost">Contact Us</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-cta-band">
+      <div class="lp-cta-band-inner lp-shell" style="max-width:1200px;margin:0 auto;padding:0 var(--md-space-4);">
+        <div>
+          <h2>Take control of your email delivery</h2>
+          <p>Your relay. Your data. Your reputation. maild just makes it reliable.</p>
+        </div>
+        <a href="/signup" class="lp-btn" style="background:var(--md-text);border-color:var(--md-text);color:var(--md-surface);box-shadow:4px 4px 0 rgba(0,0,0,.25);">Start Free</a>
+      </div>
+    </section>
+
+    <footer class="lp-footer">
+      <div class="lp-footer-inner">
+        <span class="lp-footer-brand">maild</span>
+        <span class="lp-footer-mono">Built for developers who want control over their email delivery.</span>
+        <div class="lp-footer-links">
+          <a href="/docs">Docs</a>
+          <a href="https://github.com/srmdn/maild" target="_blank" rel="noopener">GitHub</a>
+          <a href="/signup">Get Started</a>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    function toggleNav() {
+      document.getElementById('lpNav').classList.toggle('open');
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') document.getElementById('lpNav').classList.remove('open');
+    });
+
+    // duplicate marquee track for a seamless infinite loop
+    (function () {
+      var track = document.getElementById('marquee');
+      track.innerHTML += track.innerHTML;
+    })();
+
+    // reveal on scroll
+    (function () {
+      var els = document.querySelectorAll('.lp-reveal');
+      if (!('IntersectionObserver' in window)) {
+        els.forEach(function (el) { el.classList.add('in'); });
+        return;
+      }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+        });
+      }, { threshold: 0.12 });
+      els.forEach(function (el) { io.observe(el); });
+    })();
+  </script>
+</body>
+</html>
