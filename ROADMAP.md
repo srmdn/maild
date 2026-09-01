@@ -40,7 +40,7 @@ The long-term target is a hybrid brand (see `## Hybrid`), but the immediate focu
   - [x] Normalize suppression/unsubscribe matching (case-insensitive)
   - [ ] Non-blocking backoff retry (scheduled Redis ZSET) so a single worker is not blocked by backoff
   - [ ] Migrate password hashing to bcrypt with legacy rehash path
-- [ ] Add a release workflow (test, vuln scan, image build, version stamping — no automatic tag)
+- [x] Add a release workflow (test, vuln scan, image build, version stamping — no automatic tag)
 
 ### Phase 2 — v1.0 gate
 
