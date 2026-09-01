@@ -1,7 +1,9 @@
 APP_NAME=maild
 MAIN_PACKAGE=./cmd/server
+VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/srmdn/maild/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: setup run build test tidy fmt-check check-attribution vuln verify verify-full
+.PHONY: setup run version build test tidy fmt-check check-attribution vuln verify verify-full
 
 setup:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -11,9 +13,12 @@ setup:
 run:
 	go run $(MAIN_PACKAGE)
 
+version:
+	@echo "$(VERSION)"
+
 build:
 	mkdir -p bin
-	go build -o bin/$(APP_NAME) $(MAIN_PACKAGE)
+	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) $(MAIN_PACKAGE)
 
 test:
 	go test ./...
