@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -85,6 +86,9 @@ return res[1]
 func (q *RedisQueue) popReadyRetry(ctx context.Context) (int64, bool, error) {
 	val, err := popReadyRetryScript.Run(ctx, q.client, []string{q.retryKey}, time.Now().UnixMilli()).Result()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	if val == nil {
