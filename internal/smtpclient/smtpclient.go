@@ -1,9 +1,9 @@
 package smtpclient
 
 import (
-	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,11 +39,11 @@ func (c *Client) DefaultCredentials() Credentials {
 }
 
 func ProviderName(creds Credentials) string {
-	return fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	return address(creds.Host, creds.Port)
 }
 
 func (c *Client) Send(creds Credentials, toEmail, subject, body string) error {
-	addr := fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	addr := address(creds.Host, creds.Port)
 	msg := buildMessage(creds.From, toEmail, subject, body)
 
 	var auth smtp.Auth
@@ -55,7 +55,7 @@ func (c *Client) Send(creds Credentials, toEmail, subject, body string) error {
 }
 
 func (c *Client) Validate(creds Credentials, timeout time.Duration) error {
-	addr := fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	addr := address(creds.Host, creds.Port)
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.Dial("tcp", addr)
 	if err != nil {
@@ -75,6 +75,10 @@ func (c *Client) Validate(creds Credentials, timeout time.Duration) error {
 		}
 	}
 	return client.Noop()
+}
+
+func address(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func buildMessage(from, to, subject, body string) string {
