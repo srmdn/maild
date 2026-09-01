@@ -3,7 +3,7 @@ MAIN_PACKAGE=./cmd/server
 VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/srmdn/maild/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: setup run version build test test-store tidy fmt-check check-attribution vuln verify verify-full
+.PHONY: setup run version build release test test-store tidy fmt-check check-attribution vuln verify verify-full
 
 setup:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -19,6 +19,14 @@ version:
 build:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) $(MAIN_PACKAGE)
+
+release:
+	mkdir -p bin
+	@for spec in "linux:amd64" "linux:arm64" "darwin:arm64"; do \
+		os=$${spec%%:*}; arch=$${spec##*:}; \
+		echo "building $$os/$$arch"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME)-$$os-$$arch $(MAIN_PACKAGE); \
+	done
 
 test:
 	go test ./...
