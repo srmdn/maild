@@ -2,7 +2,7 @@
 
 `maild` is a **self-hosted outbound email control plane** — a sending orchestration, policy, and observability layer in front of your SMTP relay (for example MXRoute). It is transactional and conversational by design (see RELEASING.md) and deliberately avoids mass/cold-email tooling.
 
-The long-term target is a hybrid brand (see `## Hybrid`), but the immediate focus is shipping this outbound control plane to `v1.0.0`.
+The business model and deployment topology are decided (see `## Business model & deployment`), and the immediate focus is shipping this outbound control plane to `v1.0.0`.
 
 ## In scope for v1.0
 
@@ -38,8 +38,8 @@ The long-term target is a hybrid brand (see `## Hybrid`), but the immediate focu
 - [x] Verify and document the "first send" path (signup -> SMTP account -> send -> logs)
 - [x] Review email-safety expectations against implementation (suppression, rate-limit, backoff, no credential leakage)
   - [x] Normalize suppression/unsubscribe matching (case-insensitive)
-  - [ ] Non-blocking backoff retry (scheduled Redis ZSET) so a single worker is not blocked by backoff
-  - [ ] Migrate password hashing to bcrypt with legacy rehash path
+  - [x] Non-blocking backoff retry (scheduled Redis ZSET) so a single worker is not blocked by backoff
+  - [x] Migrate password hashing to bcrypt with legacy rehash path
 - [x] Add a release workflow (test, vuln scan, image build, version stamping — no automatic tag)
 
 ### Phase 2 — v1.0 gate
@@ -48,6 +48,18 @@ The long-term target is a hybrid brand (see `## Hybrid`), but the immediate focu
 - [ ] Pass `make verify-full` in CI
 - [ ] Tag `v1.0.0` (manual, gated by RELEASING.md)
 
-## Hybrid (long-term target)
+## Business model & deployment (decided)
 
-Business email hosting (mailbox, webmail, IMAP) on top of MXRoute/DirectAdmin is the revenue engine; `maild` becomes the transactional/control-plane companion for the same customers. That path reuses from `maild`: auth/RBAC, workspaces, domain readiness, onboarding, metering/billing, and incidents.
+Self-hosted, open-source (AGPL) outbound email control plane, following the self-hosted OSS playbook (BillionMail-style). It is BYO-SMTP: the customer brings the relay; maild provides the orchestration, policy, and observability layer. It sends transactional/conversational mail and respects relay AUP (not mass/cold-email tooling).
+
+Revenue does not come from a hosted cloud at v1.0. It comes from:
+- GitHub Sponsors / Ko-fi (already configured: `ko_fi: srmdn`)
+- Paid support and deployment help (installs, migration, managed support)
+
+Deployment topology:
+- Personal / own use -> Docker containers (Postgres, Redis, maild) on the existing VPS (`server.srmdn.com` / gc1dc2).
+- Client deployments -> a dedicated small VPS per client, isolated from the user's production host.
+
+Not pursued now (revisit only if demand proves it): a hosted, multi-tenant maild cloud on the same box. That would require operating 24/7 email infrastructure and support, and the user's client-production VPS stays isolated.
+
+Open task: rework the landing pricing cards to match this model (free self-host + Sponsor/Support) instead of paid cloud tiers.
