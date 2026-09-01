@@ -35,3 +35,6 @@ tmp/
 # Internal strategy docs (do not commit)
 docs/internal/
 docs/GIT-IDENTITY.md
+
+# Agent/session handoff state (local only)
+.local/
