@@ -20,6 +20,11 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (dom
 	return u, err
 }
 
+func (s *Store) UpdateUserPasswordHash(ctx context.Context, userID int64, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
+	return err
+}
+
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	row := s.db.QueryRowContext(
 		ctx,

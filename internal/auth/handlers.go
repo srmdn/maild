@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/srmdn/maild/internal/crypto"
 	"github.com/srmdn/maild/internal/domain"
 	"github.com/srmdn/maild/internal/store/postgres"
@@ -88,6 +90,10 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
+	if len(password) > 72 {
+		writeError(w, http.StatusBadRequest, "password must be 72 characters or less")
+		return
+	}
 
 	exists, err := h.store.EmailExists(r.Context(), email)
 	if err != nil {
@@ -99,9 +105,13 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := hashPassword(password)
+	hash, err := hashPassword(password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		return
+	}
 
-	user, err := h.store.CreateUser(r.Context(), email, string(hash))
+	user, err := h.store.CreateUser(r.Context(), email, hash)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
@@ -170,6 +180,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if !verifyPassword(password, user.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+
+	// Upgrade legacy SHA-256 hashes to bcrypt on successful login.
+	if !isBcryptHash(user.PasswordHash) {
+		if newHash, err := hashPassword(password); err == nil {
+			_ = h.store.UpdateUserPasswordHash(r.Context(), user.ID, newHash)
+		}
 	}
 
 	userWithWS, err := h.store.GetUserWorkspace(r.Context(), user.ID)
@@ -639,15 +656,31 @@ func isValidEmail(email string) bool {
 	return strings.Contains(email, "@") && len(email) >= 3
 }
 
-func hashPassword(password string) string {
+func hashPassword(password string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func verifyPassword(password, hash string) bool {
+	if isBcryptHash(hash) {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	}
+	// Legacy pre-bcrypt hmac-style hash; upgrade on successful login.
+	return legacyHash(password) == hash
+}
+
+func isBcryptHash(hash string) bool {
+	return strings.HasPrefix(hash, "$2")
+}
+
+func legacyHash(password string) string {
 	salt := "maild-salt-v1-"
 	h := sha256.New()
 	h.Write([]byte(salt + password))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
-}
-
-func verifyPassword(password, hash string) bool {
-	return hashPassword(password) == hash
 }
 
 const userIDContextKey ctxKey = "user_id"
