@@ -33,15 +33,18 @@ Most teams end up with ad-hoc scripts plus provider dashboards. That creates bli
 - operator console for logs, timeline, and incident workflows
 
 `maild` is not:
-- inbox hosting (no IMAP/POP/webmail)
+- inbox hosting (no IMAP/POP/webmail, no mailbox provisioning)
+- a mail server (it sends through an existing SMTP relay; it is not a Postfix/Dovecot stack)
+- mass / cold-email tooling (transactional & conversational only, to respect relay provider AUP)
 - a complete ESP marketing suite (yet)
 
-## Current State (April 28, 2026)
+## Current State (pre-1.0)
 
-- Stable v0.x control-plane core is implemented.
-- API, queue/worker, retries, safety checks, and signed webhooks are in place.
-- User-facing auth and dashboard exist.
-- Operator UI exists at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
+- Outbound control-plane core is implemented and tested.
+- API, queue/worker, retries/backoff, safety checks, and signed webhooks are in place.
+- User auth, RBAC, per-user API keys, and a server-rendered UI exist.
+- Operator console: `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
+- Pre-1.0: no tags or releases until the v1.0 gate (see [RELEASING.md](RELEASING.md)).
 
 ## Production Profile
 
@@ -51,25 +54,7 @@ Most teams end up with ad-hoc scripts plus provider dashboards. That creates bli
 
 ## Public Roadmap
 
-Roadmap execution is tracked in GitHub milestones/issues:
-
-- `v0.6.0` Production hardening baseline
-  - [#14](https://github.com/srmdn/maild/issues/14) tracker
-  - [#15](https://github.com/srmdn/maild/issues/15) production env and config validation
-  - [#16](https://github.com/srmdn/maild/issues/16) deploy baseline and runtime topology
-  - [#17](https://github.com/srmdn/maild/issues/17) preflight release gate
-- `v0.7.0` Campaign composer MVP
-  - [#18](https://github.com/srmdn/maild/issues/18) campaign model and API
-  - [#19](https://github.com/srmdn/maild/issues/19) composer UI + preview + test-send
-- `v0.8.0` Audience builder MVP
-  - [#20](https://github.com/srmdn/maild/issues/20) import pipeline and compliance-aware filtering
-  - [#21](https://github.com/srmdn/maild/issues/21) audience UI and basic segmentation
-- `v0.9.0` Ops and onboarding maturity
-  - [#22](https://github.com/srmdn/maild/issues/22) observability and alerting baseline
-  - [#12](https://github.com/srmdn/maild/issues/12) workspace invitation flow
-  - [#13](https://github.com/srmdn/maild/issues/13) design partner onboarding program
-- `v1.0.0` GA release gate
-  - [#23](https://github.com/srmdn/maild/issues/23) full end-to-end QA matrix
+Short- to mid-term plan lives in [ROADMAP.md](ROADMAP.md); release/version policy lives in [RELEASING.md](RELEASING.md).
 
 ## Stack
 
@@ -106,31 +91,55 @@ http://localhost:8025
 
 ## Core API Surface
 
+Authenticated with an `X-API-Key` header (`ADMIN_API_KEY` / `OPERATOR_API_KEY` from `.env`):
+
+Message & delivery:
 - `POST /v1/messages`
 - `POST /v1/messages/retry`
-- `POST /v1/webhooks/events`
-- `GET /v1/webhooks/logs`
-- `POST /v1/webhooks/replay`
-- `POST /v1/smtp-accounts`
-- `GET /v1/smtp-accounts/list`
-- `POST /v1/smtp-accounts/activate`
-- `GET/POST /v1/workspaces/policy`
 - `GET /v1/messages/logs`
 - `GET /v1/messages/timeline`
+
+SMTP accounts:
+- `POST /v1/smtp-accounts`
+- `POST /v1/smtp-accounts/activate`
+- `POST /v1/smtp-accounts/validate`
+- `GET /v1/smtp-accounts/list`
+
+Compliance & safety:
+- `POST /v1/suppressions`
+- `POST /v1/unsubscribes`
+- `GET/POST /v1/workspaces/policy`
+- `POST /v1/domains/readiness`
+
+Webhooks:
+- `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
+- `GET /v1/webhooks/logs`
+- `POST /v1/webhooks/replay`
+
+Operational:
+- `GET /v1/ops/onboarding-checklist`
 - `GET /v1/incidents/bundle`
+- `GET /v1/analytics/summary`
+- `GET /v1/analytics/export.csv`
+- `GET /v1/billing/metering`
 
-User/auth routes:
-- `GET /`
-- `GET/POST /signup`
-- `GET/POST /login`
-- `GET /dashboard`
+User/auth routes (session-based):
+- `GET /` (landing page / JSON build info)
+- `GET /signup`, `GET /login`, `GET /logout`, `GET /me`
+- `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`
+- `GET /api/v1/onboarding/checklist`
+- `GET/POST/DELETE /api/v1/user/keys*`
+- `GET /dashboard` (requires login)
 
-Operator routes:
+Operator routes (require auth):
 - `GET /ui`
 - `GET /ui/logs`
 - `GET /ui/onboarding`
 - `GET /ui/incidents`
 - `GET /ui/policy`
+
+Health:
+- `GET /healthz`, `GET /readyz`
 
 ## Security And Safety Defaults
 
