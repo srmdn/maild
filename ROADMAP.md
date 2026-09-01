@@ -28,14 +28,14 @@ The long-term target is a hybrid brand (see `## Hybrid`), but the immediate focu
 - [x] Direction and release policy locked (RELEASING.md)
 - [x] Stale root `migrations/` removed (single source: `internal/migrate/sql`)
 - [x] `buildinfo.Version` stamped via ldflags (`make version`, `make build`)
-- [ ] README refreshed to the actual surface
-- [ ] DB layer tests (`store/postgres`) against a real Postgres
-- [ ] First-send end-to-end path documented
+- [x] README refreshed to the actual surface
+- [x] DB layer tests (`store/postgres`) against a real Postgres
+- [x] First-send end-to-end path documented in the README
 
 ### Phase 1 — Correctness & release engineering
 
-- [ ] `store/postgres` test coverage against real Postgres
-- [ ] Verify and document the "first send" path (signup -> SMTP account -> send -> logs)
+- [x] `store/postgres` test coverage against real Postgres
+- [x] Verify and document the "first send" path (signup -> SMTP account -> send -> logs)
 - [ ] Review email-safety expectations against implementation (suppression, rate-limit, backoff, no credential leakage)
 - [ ] Add a release workflow (test, vuln scan, image build, version stamping — no automatic tag)
 

@@ -89,6 +89,33 @@ curl -sS http://localhost:8080/healthz
 http://localhost:8025
 ```
 
+## First Send (end-to-end)
+
+Using the operator API key from `.env` (`ADMIN_API_KEY` / `OPERATOR_API_KEY`):
+
+1. Register a local SMTP relay (in development, Mailpit at `localhost:1025` accepts without auth):
+
+   ```sh
+   curl -s -X POST http://localhost:8080/v1/smtp-accounts \
+     -H 'X-API-Key: change-me-admin' -H 'Content-Type: application/json' \
+     -d '{"workspace_id":1,"name":"mailpit","host":"localhost","port":1025,"from_email":"noreply@maild.local"}'
+   ```
+
+2. Queue a message:
+
+   ```sh
+   curl -s -X POST http://localhost:8080/v1/messages \
+     -H 'X-API-Key: change-me-admin' -H 'Content-Type: application/json' \
+     -d '{"workspace_id":1,"from_email":"noreply@maild.local","to_email":"you@example.com","subject":"Hi","body_text":"Hello from maild"}'
+   ```
+
+3. The worker sends it via the configured SMTP account. Confirm delivery in Mailpit at `http://localhost:8025`, or inspect the attempt/log:
+
+   ```sh
+   curl -s "http://localhost:8080/v1/messages/logs?workspace_id=1" -H 'X-API-Key: change-me-admin'
+   curl -s "http://localhost:8080/v1/messages/timeline?message_id=1" -H 'X-API-Key: change-me-admin'
+   ```
+
 ## Core API Surface
 
 Authenticated with an `X-API-Key` header (`ADMIN_API_KEY` / `OPERATOR_API_KEY` from `.env`):
@@ -163,6 +190,12 @@ For a security-inclusive local pass:
 
 ```sh
 make verify-full
+```
+
+Store integration tests against a real Postgres (skipped automatically when `MAILD_TEST_DSN` is unset; requires the dev Postgres from `make setup` plus a `maild_test` database):
+
+```sh
+make test-store
 ```
 
 ## Governance

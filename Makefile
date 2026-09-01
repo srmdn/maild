@@ -3,7 +3,7 @@ MAIN_PACKAGE=./cmd/server
 VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/srmdn/maild/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: setup run version build test tidy fmt-check check-attribution vuln verify verify-full
+.PHONY: setup run version build test test-store tidy fmt-check check-attribution vuln verify verify-full
 
 setup:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -22,6 +22,9 @@ build:
 
 test:
 	go test ./...
+
+test-store:
+	MAILD_TEST_DSN=postgres://maild:maild@localhost:5432/maild_test?sslmode=disable go test ./internal/store/postgres -count=1 -v
 
 tidy:
 	go mod tidy
