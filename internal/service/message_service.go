@@ -51,6 +51,13 @@ type MessageQueue interface {
 	Dequeue(ctx context.Context, timeout time.Duration) (int64, bool, error)
 }
 
+// RetryScheduler is implemented by queues that support delayed retries
+// (e.g. a Redis ZSET with a ready_at score) so the worker is not blocked
+// by an in-process backoff sleep.
+type RetryScheduler interface {
+	ScheduleRetry(ctx context.Context, id int64, at time.Time) error
+}
+
 type RateLimiter interface {
 	Allow(ctx context.Context, workspaceID int64, recipientDomain string) (bool, string, error)
 }
@@ -302,6 +309,9 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 		return err
 	}
 
+	if sched, ok := s.queue.(RetryScheduler); ok {
+		return sched.ScheduleRetry(ctx, m.ID, time.Now().Add(backoffDuration(attemptNo)))
+	}
 	time.Sleep(backoffDuration(attemptNo))
 	return s.queue.Enqueue(ctx, m.ID)
 }
