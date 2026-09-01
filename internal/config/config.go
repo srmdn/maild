@@ -51,6 +51,12 @@ type Config struct {
 	AutoFailoverWindow        time.Duration
 	AutoFailoverCooldown      time.Duration
 
+	AllowSignup        bool
+	LoginPath          string
+	LoginMaxFailures   int
+	LoginFailureWindow time.Duration
+	LoginLockout       time.Duration
+
 	PostgresDSN string
 	RedisAddr   string
 	RedisDB     int
@@ -91,6 +97,11 @@ func Load() Config {
 		AutoFailoverFailures:      getIntEnv("AUTO_FAILOVER_FAILURE_THRESHOLD", 3),
 		AutoFailoverWindow:        getDurationEnv("AUTO_FAILOVER_WINDOW", 5*time.Minute),
 		AutoFailoverCooldown:      getDurationEnv("AUTO_FAILOVER_COOLDOWN", 2*time.Minute),
+		AllowSignup:               getBoolEnv("APP_ALLOW_SIGNUP", !isProduction),
+		LoginPath:                 getEnv("APP_LOGIN_PATH", "/login"),
+		LoginMaxFailures:          getIntEnv("APP_LOGIN_MAX_FAILURES", 5),
+		LoginFailureWindow:        getDurationEnv("APP_LOGIN_FAILURE_WINDOW", 5*time.Minute),
+		LoginLockout:              getDurationEnv("APP_LOGIN_LOCKOUT", 10*time.Minute),
 		PostgresDSN:               getEnv("POSTGRES_DSN", envFallbackString(isProduction, defaultPostgresDSN)),
 		RedisAddr:                 getEnv("REDIS_ADDR", envFallbackString(isProduction, defaultRedisAddr)),
 		RedisDB:                   getIntEnv("REDIS_DB", 0),
@@ -179,6 +190,31 @@ func (c Config) Validate() error {
 		if c.AutoFailoverCooldown < 0 {
 			return ErrInvalidConfig("AUTO_FAILOVER_COOLDOWN must be >= 0 when AUTO_FAILOVER_ENABLED=true")
 		}
+	}
+	if strings.TrimSpace(c.LoginPath) == "" {
+		return ErrInvalidConfig("APP_LOGIN_PATH must not be empty")
+	}
+	if !strings.HasPrefix(c.LoginPath, "/") {
+		return ErrInvalidConfig("APP_LOGIN_PATH must start with '/'")
+	}
+	if strings.ContainsAny(c.LoginPath, "?# \t\n") {
+		return ErrInvalidConfig("APP_LOGIN_PATH must not contain spaces, '?', '#', or tabs")
+	}
+	appRoutes := map[string]struct{}{
+		"/": {}, "/signup": {}, "/support": {}, "/dashboard": {},
+		"/healthz": {}, "/readyz": {}, "/me": {}, "/logout": {}, "/static": {},
+	}
+	if _, ok := appRoutes[c.LoginPath]; ok || strings.HasPrefix(c.LoginPath, "/static") {
+		return ErrInvalidConfig("APP_LOGIN_PATH conflicts with a reserved route")
+	}
+	if c.LoginMaxFailures < 1 {
+		return ErrInvalidConfig("APP_LOGIN_MAX_FAILURES must be >= 1")
+	}
+	if c.LoginFailureWindow <= 0 {
+		return ErrInvalidConfig("APP_LOGIN_FAILURE_WINDOW must be > 0")
+	}
+	if c.LoginLockout <= 0 {
+		return ErrInvalidConfig("APP_LOGIN_LOCKOUT must be > 0")
 	}
 	return nil
 }

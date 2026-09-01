@@ -274,11 +274,12 @@
 
     const API_KEY = '{{.OperatorAPIKey}}';
     const WORKSPACE_ID = {{.WorkspaceID}};
+    const LOGIN_PATH = '{{.LoginPath}}';
 
     async function loadUser() {
       const res = await fetch('/me');
       if (!res.ok) {
-        window.location.href = '/login';
+        window.location.href = LOGIN_PATH;
         return;
       }
       const user = await res.json();

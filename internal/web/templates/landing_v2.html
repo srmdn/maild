@@ -208,8 +208,10 @@
           <a class="lp-link" href="#how">How it works</a>
           <a class="lp-link" href="#pricing">Pricing</a>
           <a class="lp-link" href="/support">Support</a>
-          <a class="lp-link" href="/login">Log in</a>
+          {{if .AllowSignup}}
+          <a class="lp-link" href="{{.LoginPath}}">Log in</a>
           <a class="lp-btn lp-btn--accent" href="/signup">Get Started</a>
+          {{end}}
         </nav>
       </div>
     </header>
@@ -228,8 +230,10 @@
             <h1 class="lp-title">Own the pipe behind your <span class="hl">email</span></h1>
             <p class="lp-sub">A self-hosted outbound email control plane. Bring your own SMTP, and let maild handle the queue, retries, safety rails, and observability — so your email actually lands.</p>
             <div class="lp-cta-row">
+              {{if .AllowSignup}}
               <a href="/signup" class="lp-btn lp-btn--accent">Start Free</a>
-              <a href="/login" class="lp-btn lp-btn--ghost">View Operator Console</a>
+              <a href="{{.LoginPath}}" class="lp-btn lp-btn--ghost">View Operator Console</a>
+              {{end}}
             </div>
             <div class="lp-hero-foot">
               <span><b>Deploy</b> docker</span>
@@ -348,7 +352,7 @@
           <h2>Take control of your email delivery</h2>
           <p>Your relay. Your data. Your reputation. maild just makes it reliable.</p>
         </div>
-        <a href="/signup" class="lp-btn" style="background:var(--md-text);border-color:var(--md-text);color:var(--md-surface);box-shadow:4px 4px 0 rgba(0,0,0,.25);">Start Free</a>
+        {{if .AllowSignup}}<a href="/signup" class="lp-btn" style="background:var(--md-text);border-color:var(--md-text);color:var(--md-surface);box-shadow:4px 4px 0 rgba(0,0,0,.25);">Start Free</a>{{end}}
       </div>
     </section>
 
@@ -360,7 +364,7 @@
           <a href="/docs">Docs</a>
           <a href="https://github.com/srmdn/maild" target="_blank" rel="noopener">GitHub</a>
           <a href="/support">Support</a>
-          <a href="/signup">Get Started</a>
+          {{if .AllowSignup}}<a href="/signup">Get Started</a>{{end}}
         </div>
       </div>
     </footer>

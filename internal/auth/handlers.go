@@ -31,11 +31,14 @@ type AuthHandler struct {
 	cookieSecure   bool
 	cookieDomain   string
 	appEnv         string
+	allowSignup    bool
+	loginPath      string
+	loginLimiter   *LoginRateLimiter
 	signupTemplate *template.Template
 	loginTemplate  *template.Template
 }
 
-func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv string) *AuthHandler {
+func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv string, allowSignup bool, loginPath string, loginLimiter *LoginRateLimiter) *AuthHandler {
 	secure := appEnv == "production"
 	return &AuthHandler{
 		store:        store,
@@ -43,6 +46,9 @@ func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv st
 		cookieSecure: secure,
 		cookieDomain: "",
 		appEnv:       appEnv,
+		allowSignup:  allowSignup,
+		loginPath:    loginPath,
+		loginLimiter: loginLimiter,
 	}
 }
 
@@ -70,6 +76,10 @@ type authResponse struct {
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.allowSignup {
+		writeError(w, http.StatusForbidden, "signup is disabled")
 		return
 	}
 
@@ -153,6 +163,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ip := clientIP(r)
+	if locked, err := h.loginLimiter.IsLocked(r.Context(), ip); err == nil && locked {
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
+
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
@@ -169,6 +185,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.store.GetUserByEmail(r.Context(), email)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, context.DeadlineExceeded) {
+		_ = h.loginLimiter.RecordFailure(r.Context(), ip)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -178,9 +195,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !verifyPassword(password, user.PasswordHash) {
+		_ = h.loginLimiter.RecordFailure(r.Context(), ip)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+
+	_ = h.loginLimiter.Reset(r.Context(), ip)
 
 	// Upgrade legacy SHA-256 hashes to bcrypt on successful login.
 	if !isBcryptHash(user.PasswordHash) {
@@ -248,12 +268,19 @@ func (h *AuthHandler) SignupPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !h.allowSignup {
+		http.NotFound(w, r)
+		return
+	}
 	if h.signupTemplate == nil {
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	data := struct {
+		LoginPath string
+	}{h.loginPath}
 	var buf bytes.Buffer
-	if err := h.signupTemplate.Execute(&buf, nil); err != nil {
+	if err := h.signupTemplate.Execute(&buf, data); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
 		return
 	}
@@ -271,8 +298,12 @@ func (h *AuthHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	data := struct {
+		LoginPath   string
+		AllowSignup bool
+	}{h.loginPath, h.allowSignup}
 	var buf bytes.Buffer
-	if err := h.loginTemplate.Execute(&buf, nil); err != nil {
+	if err := h.loginTemplate.Execute(&buf, data); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
 		return
 	}

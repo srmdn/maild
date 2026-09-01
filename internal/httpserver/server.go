@@ -34,7 +34,7 @@ var (
 
 func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, apiHandler *api.Handler, authHandler *auth.AuthHandler, staticFS fs.FS) *Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleIndex)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { handleIndex(w, r, cfg) })
 	mux.HandleFunc("/support", handleSupport)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -42,18 +42,20 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 	})
 
 	if authHandler != nil {
-		mux.HandleFunc("/signup", authHandler.SignupPage)
-		mux.HandleFunc("/login", authHandler.LoginPage)
+		mux.HandleFunc("GET "+cfg.LoginPath, authHandler.LoginPage)
+		mux.HandleFunc("POST "+cfg.LoginPath, authHandler.Login)
 		mux.HandleFunc("/logout", authHandler.Logout)
 		mux.HandleFunc("/me", authHandler.Me)
-		mux.HandleFunc("/api/v1/auth/signup", authHandler.Signup)
-		mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
+		if cfg.AllowSignup {
+			mux.HandleFunc("GET /signup", authHandler.SignupPage)
+			mux.HandleFunc("POST /api/v1/auth/signup", authHandler.Signup)
+		}
 		mux.HandleFunc("/api/v1/onboarding/checklist", authHandler.RequireAuth(authHandler.GetOnboardingChecklist))
 		mux.HandleFunc("/api/v1/user/keys", authHandler.RequireAuth(authHandler.ListAPIKeys))
 		mux.HandleFunc("POST /api/v1/user/keys/create", authHandler.RequireAuth(authHandler.CreateAPIKey))
 		mux.HandleFunc("DELETE /api/v1/user/keys", authHandler.RequireAuth(authHandler.DeleteAPIKey))
 		mux.HandleFunc("/dashboard", authHandler.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
-			handleDashboard(w, r, authHandler, cfg.OperatorAPIKey)
+			handleDashboard(w, r, authHandler, cfg.OperatorAPIKey, cfg.LoginPath)
 		}))
 	}
 
@@ -128,7 +130,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
-func handleIndex(w http.ResponseWriter, r *http.Request) {
+func handleIndex(w http.ResponseWriter, r *http.Request, cfg config.Config) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -151,9 +153,13 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Version string
+		Version     string
+		AllowSignup bool
+		LoginPath   string
 	}{
-		Version: buildinfo.Version,
+		Version:     buildinfo.Version,
+		AllowSignup: cfg.AllowSignup,
+		LoginPath:   cfg.LoginPath,
 	}
 
 	var buf bytes.Buffer
@@ -166,7 +172,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
-func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.AuthHandler, operatorAPIKey string) {
+func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.AuthHandler, operatorAPIKey, loginPath string) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -178,10 +184,12 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.A
 		UserID         int64
 		WorkspaceID    int64
 		OperatorAPIKey string
+		LoginPath      string
 	}{
 		UserID:         userID,
 		WorkspaceID:    workspaceID,
 		OperatorAPIKey: operatorAPIKey,
+		LoginPath:      loginPath,
 	}
 
 	var buf bytes.Buffer

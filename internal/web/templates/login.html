@@ -58,7 +58,7 @@
         </div>
         <button type="submit" class="auth-button">Log In</button>
       </form>
-      <p class="auth-footer">Don't have an account? <a href="/signup">Sign up</a></p>
+      {{if .AllowSignup}}<p class="auth-footer">Don't have an account? <a href="/signup">Sign up</a></p>{{end}}
     </div>
   </div>
 
@@ -74,7 +74,7 @@
       errorEl.hidden = true;
       const email = document.getElementById('email').value;
       const password = document.getElementById('password').value;
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch('{{.LoginPath}}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })

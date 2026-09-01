@@ -152,8 +152,9 @@ Operational:
 
 User/auth routes (session-based):
 - `GET /` (landing page / JSON build info)
-- `GET /signup`, `GET /login`, `GET /logout`, `GET /me`
-- `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`
+- `GET/POST {APP_LOGIN_PATH}` (login page + sign-in; `APP_LOGIN_PATH` defaults to `/login`)
+- `GET /logout`, `GET /me`
+- `GET /signup`, `POST /api/v1/auth/signup` (only when `APP_ALLOW_SIGNUP=true`)
 - `GET /api/v1/onboarding/checklist`
 - `GET/POST/DELETE /api/v1/user/keys*`
 - `GET /dashboard` (requires login)
