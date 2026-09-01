@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Support | maild</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { background: var(--md-bg); color: var(--md-text); font-family: var(--md-font-sans); margin: 0; line-height: 1.5; overflow-x: hidden; }
+    .lp-page {
+      background-image: linear-gradient(var(--md-border-light) 1px, transparent 1px), linear-gradient(90deg, var(--md-border-light) 1px, transparent 1px);
+      background-size: 44px 44px; background-position: -1px -1px; position: relative;
+    }
+    .lp-shell { max-width: 1100px; margin: 0 auto; padding: 0 var(--md-space-4); }
+
+    .lp-topbar { position: sticky; top: 0; z-index: 50; background: var(--md-surface); border-bottom: 3px solid var(--md-border); }
+    .lp-topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: var(--md-space-3); padding: var(--md-space-3) var(--md-space-4); }
+    .lp-brand { font-family: var(--md-font-mono); font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em; text-transform: uppercase; color: var(--md-text); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+    .lp-brand::before { content: ""; width: 14px; height: 14px; background: var(--md-accent); display: inline-block; }
+    .lp-nav { display: flex; align-items: center; gap: var(--md-space-2); }
+    .lp-nav a.lp-link { text-decoration: none; color: var(--md-text); font-weight: 600; font-size: .9rem; text-transform: uppercase; letter-spacing: .03em; padding: 8px 4px; }
+    .lp-nav a.lp-link:hover { color: var(--md-accent); }
+    .lp-toggle { display: none; background: none; border: 2px solid var(--md-border); font-size: 1.3rem; padding: 4px 12px; cursor: pointer; }
+    .lp-btn { text-decoration: none; font-weight: 800; font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; padding: 12px 20px; border: 2px solid var(--md-border); border-radius: 0; background: var(--md-text); color: var(--md-surface); display: inline-block; box-shadow: 4px 4px 0 var(--md-border); transition: transform .08s, box-shadow .08s, background .15s; }
+    .lp-btn:hover { background: var(--md-accent); border-color: var(--md-accent); color: var(--md-accent-ink); }
+    .lp-btn:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 var(--md-border); }
+    .lp-btn--accent { background: var(--md-accent); border-color: var(--md-accent); color: var(--md-accent-ink); }
+    .lp-btn--ghost { background: var(--md-surface); color: var(--md-text); }
+
+    .lp-hero { padding: calc(var(--md-space-5) + 20px) 0 var(--md-space-5); }
+    .lp-kicker { color: var(--md-accent); font-family: var(--md-font-mono); font-size: .82rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 var(--md-space-3); }
+    .lp-hero h1 { font-size: clamp(2.6rem, 6vw, 4.6rem); font-weight: 900; line-height: .95; letter-spacing: -0.035em; text-transform: uppercase; margin: 0 0 var(--md-space-3); }
+    .lp-hero .hl { color: var(--md-accent); }
+    .lp-hero p.sub { font-size: 1.15rem; color: var(--md-muted); max-width: 640px; margin: 0; }
+
+    .lp-section { border-top: 3px solid var(--md-border); padding: var(--md-space-5) 0; }
+    .lp-section-head { margin-bottom: var(--md-space-4); }
+    .lp-section-head h2 { font-size: clamp(1.7rem, 4vw, 2.6rem); font-weight: 900; text-transform: uppercase; letter-spacing: -0.03em; margin: 0 0 var(--md-space-2); }
+    .lp-section-head p { color: var(--md-muted); max-width: 720px; margin: 0; }
+
+    /* package card */
+    .lp-pack { border: 3px solid var(--md-accent); background: var(--md-surface); padding: var(--md-space-4); box-shadow: 8px 8px 0 var(--md-accent); display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--md-space-4); }
+    .lp-pack-tier { font-family: var(--md-font-mono); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--md-accent); }
+    .lp-pack .amt { font-size: 3rem; font-weight: 900; letter-spacing: -0.03em; margin: var(--md-space-2) 0; line-height: 1; }
+    .lp-pack .amt small { font-size: 1rem; font-weight: 500; color: var(--md-muted); }
+    .lp-pack ul { list-style: none; padding: 0; margin: var(--md-space-3) 0; }
+    .lp-pack li { padding: 9px 0; border-bottom: 1px solid var(--md-border-light); font-size: .95rem; display: flex; align-items: center; gap: 8px; }
+    .lp-pack li::before { content: "▸"; color: var(--md-accent); font-weight: 700; }
+    .lp-guarantee { display: inline-flex; gap: 8px; align-items: center; font-size: .9rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--md-ok); margin-top: var(--md-space-3); }
+    .lp-pack-cta { display: flex; flex-direction: column; align-items: flex-start; gap: var(--md-space-3); justify-content: center; }
+
+    /* services */
+    .lp-services { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--md-space-3); }
+    .lp-service { border: 2px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-4); box-shadow: 5px 5px 0 var(--md-border); transition: transform .12s, box-shadow .12s; }
+    .lp-service:hover { transform: translate(-2px,-2px); box-shadow: 7px 7px 0 var(--md-accent); }
+    .lp-service .no { font-family: var(--md-font-mono); color: var(--md-accent); font-weight: 700; font-size: .8rem; }
+    .lp-service h3 { font-size: 1.1rem; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; margin: 8px 0 6px; }
+    .lp-service p { color: var(--md-muted); font-size: .9rem; margin: 0; }
+
+    /* why */
+    .lp-why { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--md-space-3); }
+    .lp-why .w { border-top: 6px solid var(--md-accent); background: var(--md-surface-2); border: 2px solid var(--md-border); padding: var(--md-space-4); border-top: 6px solid var(--md-accent); }
+    .lp-why h4 { font-size: 1rem; font-weight: 800; text-transform: uppercase; margin: 0 0 8px; }
+    .lp-why p { color: var(--md-muted); font-size: .9rem; margin: 0; }
+
+    /* contact */
+    .lp-contact { border: 2px solid var(--md-border); background: var(--md-text); color: var(--md-surface); padding: var(--md-space-4); display: flex; align-items: center; justify-content: space-between; gap: var(--md-space-4); flex-wrap: wrap; }
+    .lp-contact h2 { color: var(--md-surface); margin: 0; }
+    .lp-contact p { margin: var(--md-space-1) 0 0; color: rgba(242,238,233,.8); }
+    .lp-contact .lp-btn { background: var(--md-accent); border-color: var(--md-accent); color: var(--md-accent-ink); }
+
+    .lp-footer { border-top: 3px solid var(--md-border); background: var(--md-surface); padding: var(--md-space-4) 0; }
+    .lp-footer-inner { display: flex; justify-content: space-between; align-items: center; gap: var(--md-space-3); flex-wrap: wrap; }
+    .lp-footer-brand { font-family: var(--md-font-mono); font-weight: 800; text-transform: uppercase; font-size: 1.1rem; }
+    .lp-footer-links { display: flex; gap: var(--md-space-3); }
+    .lp-footer-links a { color: var(--md-muted); text-decoration: none; font-size: .85rem; font-family: var(--md-font-mono); }
+    .lp-footer-links a:hover { color: var(--md-text); }
+    .lp-footer-mono { font-family: var(--md-font-mono); color: var(--md-muted); font-size: .8rem; }
+
+    .lp-reveal { opacity: 0; transform: translateY(18px); transition: opacity .5s ease, transform .5s ease; }
+    .lp-reveal.in { opacity: 1; transform: none; }
+
+    @media (max-width: 900px) {
+      .lp-pack { grid-template-columns: 1fr; }
+      .lp-services { grid-template-columns: 1fr; }
+      .lp-why { grid-template-columns: 1fr; }
+      .lp-nav { display: none; position: fixed; inset: 0; top: 60px; background: var(--md-surface); flex-direction: column; align-items: stretch; padding: var(--md-space-4); gap: var(--md-space-2); z-index: 60; }
+      .lp-nav.open { display: flex; }
+      .lp-nav a.lp-link { font-size: 1.2rem; padding: var(--md-space-3) 0; border-bottom: 1px solid var(--md-border-light); }
+      .lp-toggle { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lp-page">
+    <header class="lp-topbar">
+      <div class="lp-topbar-inner">
+        <a href="/" class="lp-brand">maild</a>
+        <button class="lp-toggle" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+        <nav class="lp-nav" id="lpNav">
+          <a class="lp-link" href="/#features">Features</a>
+          <a class="lp-link" href="/#pricing">Pricing</a>
+          <a class="lp-link" href="/support">Support</a>
+          <a class="lp-btn lp-btn--accent" href="https://ko-fi.com/srmdn">Sponsor</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="lp-shell">
+      <section class="lp-hero">
+        <p class="lp-kicker">Support &amp; Deploy</p>
+        <h1>Pay for the <span class="hl">hard part</span>, not the software</h1>
+        <p class="sub">maild is free and open source (AGPL). What you can pay for is a skilled set of hands to deploy it, wire up DNS, and keep it running — so your email actually lands.</p>
+      </section>
+
+      <section class="lp-section">
+        <div class="lp-pack lp-reveal">
+          <div>
+            <span class="lp-pack-tier">Deployment Package</span>
+            <div class="amt">$49.9 <small>/ instance</small></div>
+            <p style="color:var(--md-muted);margin:0 0 8px;">Manual deployment + 7 days of technical support. Regional / IDR pricing on request.</p>
+            <ul>
+              <li>Install &amp; setup on your VPS (Docker)</li>
+              <li>DNS configuration — SPF, DKIM, DMARC</li>
+              <li>Security &amp; anti-spam hardening</li>
+              <li>SMTP relay wiring + domain readiness</li>
+              <li>7 days of technical support</li>
+            </ul>
+            <span class="lp-guarantee">&#10003; Full refund if deployment is unsuccessful</span>
+          </div>
+          <div class="lp-pack-cta">
+            <a href="https://github.com/srmdn/maild/issues" class="lp-btn lp-btn--accent">Request Deployment</a>
+            <span class="lp-footer-mono" style="color:var(--md-muted);">Email: <a href="mailto:hello@maild.click" style="color:var(--md-accent);">hello@maild.click</a></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <div class="lp-section-head lp-reveal">
+          <h2>What's included</h2>
+          <p>We handle the fiddly parts that make self-hosted email hard — the same things our software automates on the inside.</p>
+        </div>
+        <div class="lp-services">
+          <article class="lp-service lp-reveal"><span class="no">01</span><h3>Manual Deployment</h3><p>Full setup of your VPS, Docker, Postgres, Redis, and maild — from zero to shipping.</p></article>
+          <article class="lp-service lp-reveal"><span class="no">02</span><h3>DNS Config &amp; Optimization</h3><p>Correct MX, SPF, DKIM, and DMARC records for the best deliverability and the lowest spam risk.</p></article>
+          <article class="lp-service lp-reveal"><span class="no">03</span><h3>Security Enhancements</h3><p>SSL/TLS, hardened configuration, and suppression/anti-spam guardrails on every outbound send.</p></article>
+          <article class="lp-service lp-reveal"><span class="no">04</span><h3>Technical Support &amp; Maintenance</h3><p>Help with retries, failover, webhooks, and anything that comes up while you send for real.</p></article>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <div class="lp-section-head lp-reveal">
+          <h2>Why paid support, for open source</h2>
+          <p>The software is free — but deploying and keeping email healthy takes experience. That's what you're buying.</p>
+        </div>
+        <div class="lp-why">
+          <div class="w lp-reveal"><h4>Open-source transparency</h4><p>You keep full control of the code and your data. Even with paid help, nothing is locked in.</p></div>
+          <div class="w lp-reveal"><h4>Skilled hands</h4><p>Email deliverability is fiddly. We focus on it so you don't have to debug DNS at 2am.</p></div>
+          <div class="w lp-reveal"><h4>Small, scoped</h4><p>A one-time deployment + support window. No subscriptions, no per-email pricing.</p></div>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <div class="lp-contact lp-reveal">
+          <div>
+            <h2>Ready to get maild running?</h2>
+            <p>Open an issue or drop us a line and we'll get you deployed.</p>
+          </div>
+          <a href="https://github.com/srmdn/maild/issues" class="lp-btn">Contact Us</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="lp-footer">
+      <div class="lp-shell lp-footer-inner" style="max-width:1100px;margin:0 auto;padding: var(--md-space-4);">
+        <span class="lp-footer-brand">maild</span>
+        <span class="lp-footer-mono">Free &amp; open source (AGPL). Sponsored and supported by users.</span>
+        <div class="lp-footer-links">
+          <a href="https://github.com/srmdn/maild">GitHub</a>
+          <a href="/support">Support</a>
+          <a href="/#pricing">Pricing</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    function toggleNav() {
+      document.getElementById('lpNav').classList.toggle('open');
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') document.getElementById('lpNav').classList.remove('open');
+    });
+    (function () {
+      var els = document.querySelectorAll('.lp-reveal');
+      if (!('IntersectionObserver' in window)) { els.forEach(function (el) { el.classList.add('in'); }); return; }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { threshold: 0.12 });
+      els.forEach(function (el) { io.observe(el); });
+    })();
+  </script>
+</body>
+</html>

@@ -29,11 +29,13 @@ type Server struct {
 var (
 	indexTemplate     *template.Template
 	dashboardTemplate *template.Template
+	supportTemplate   *template.Template
 )
 
 func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, apiHandler *api.Handler, authHandler *auth.AuthHandler, staticFS fs.FS) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
+	mux.HandleFunc("/support", handleSupport)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		handleReady(w, r, deps)
@@ -70,6 +72,7 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 		} else {
 			indexTemplate = tmpl["landing_v2.html"]
 			dashboardTemplate = tmpl["user_dashboard.html"]
+			supportTemplate = tmpl["support.html"]
 			logger.Info("public templates loaded successfully")
 		}
 
@@ -104,7 +107,7 @@ func loadPublicTemplates(staticFS fs.FS) (map[string]*template.Template, error) 
 
 	result := make(map[string]*template.Template)
 
-	pages := []string{"landing_v2.html", "user_dashboard.html", "signup.html", "login.html"}
+	pages := []string{"landing_v2.html", "user_dashboard.html", "signup.html", "login.html", "support.html"}
 	for _, page := range pages {
 		tmpl := template.New(page)
 		_, err := tmpl.ParseFS(fsys, page)
@@ -183,6 +186,25 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.A
 
 	var buf bytes.Buffer
 	if err := dashboardTemplate.Execute(&buf, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func handleSupport(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/support" {
+		http.NotFound(w, r)
+		return
+	}
+	if supportTemplate == nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	if err := supportTemplate.Execute(&buf, nil); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
 		return
 	}
