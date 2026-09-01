@@ -51,12 +51,14 @@ func (s *Store) EnsureDefaultWorkspace(ctx context.Context) error {
 }
 
 func (s *Store) IsSuppressed(ctx context.Context, workspaceID int64, email string) (bool, error) {
+	email = normalizeEmail(email)
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM suppressions WHERE workspace_id = $1 AND email = $2)`, workspaceID, email).Scan(&exists)
 	return exists, err
 }
 
 func (s *Store) AddSuppression(ctx context.Context, workspaceID int64, email, reason string) error {
+	email = normalizeEmail(email)
 	_, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO suppressions (workspace_id, email, reason)
@@ -68,12 +70,14 @@ func (s *Store) AddSuppression(ctx context.Context, workspaceID int64, email, re
 }
 
 func (s *Store) IsUnsubscribed(ctx context.Context, workspaceID int64, email string) (bool, error) {
+	email = normalizeEmail(email)
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM unsubscribes WHERE workspace_id = $1 AND email = $2)`, workspaceID, email).Scan(&exists)
 	return exists, err
 }
 
 func (s *Store) AddUnsubscribe(ctx context.Context, workspaceID int64, email, reason string) error {
+	email = normalizeEmail(email)
 	_, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO unsubscribes (workspace_id, email, reason)
@@ -573,6 +577,10 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 		out.RawPayload = raw.String
 	}
 	return out, nil
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 func splitDomains(raw string) []string {
