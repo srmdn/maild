@@ -462,6 +462,54 @@ func TestStoreWebhookAtomicIdempotencyAndReplay(t *testing.T) {
 	}
 }
 
+func TestReplayPreservesExistingSuppressionTimestamp(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const email = "already-suppressed@example.com"
+	if err := store.AddSuppression(ctx, 1, email, "original permanent bounce"); err != nil {
+		t.Fatal(err)
+	}
+	originalCreatedAt := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE suppressions SET created_at = $3 WHERE workspace_id = $1 AND email = $2`, 1, email, originalCreatedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	dead, err := store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+		WorkspaceID: 1,
+		IdentityKey: "test-provider:existing-suppression-replay",
+		EventType:   "bounce_permanent",
+		Email:       email,
+		Reason:      "replayed permanent bounce",
+		Status:      "dead_letter",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ReplayWebhookEventAtomic(ctx, 1, dead.ID); err != nil || !claimed {
+		t.Fatalf("ReplayWebhookEventAtomic() claimed = %t, err = %v; want a successful claim", claimed, err)
+	}
+
+	var count int
+	var gotCreatedAt time.Time
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT count(*), min(created_at) FROM suppressions WHERE workspace_id = $1 AND email = $2`, 1, email,
+	).Scan(&count, &gotCreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("replay left %d suppression rows, want 1", count)
+	}
+	if !gotCreatedAt.Equal(originalCreatedAt) {
+		t.Fatalf("suppression created_at after replay = %s, want original %s", gotCreatedAt, originalCreatedAt)
+	}
+}
+
 func TestStoreUsersAndWorkspaces(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
