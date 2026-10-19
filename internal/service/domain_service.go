@@ -21,7 +21,7 @@ func NewDomainService(store DomainStore, checker *domaincheck.Checker) *DomainSe
 }
 
 func (s *DomainService) CheckReadiness(ctx context.Context, workspaceID int64, domain, dkimSelector string) (domaincheck.Result, error) {
-	result, err := s.checker.Check(ctx, strings.TrimSpace(domain), strings.TrimSpace(dkimSelector))
+	result, err := s.InspectReadiness(ctx, domain, dkimSelector)
 	if err != nil {
 		return domaincheck.Result{}, err
 	}
@@ -29,4 +29,10 @@ func (s *DomainService) CheckReadiness(ctx context.Context, workspaceID int64, d
 		return domaincheck.Result{}, err
 	}
 	return result, nil
+}
+
+// InspectReadiness is safe for read-only checklist requests; persistence belongs
+// to the explicit, authorized POST readiness action.
+func (s *DomainService) InspectReadiness(ctx context.Context, domain, dkimSelector string) (domaincheck.Result, error) {
+	return s.checker.Check(ctx, strings.TrimSpace(domain), strings.TrimSpace(dkimSelector))
 }

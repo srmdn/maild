@@ -37,10 +37,6 @@
       <h3>Session Controls</h3>
       <div class="md-grid md-grid-3">
         <div class="md-form-row">
-          <label class="md-label" for="apiKey">Operator API Key</label>
-          <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
-        </div>
-        <div class="md-form-row">
           <label class="md-label" for="rangeFrom">From (UTC)</label>
           <input class="md-input" id="rangeFrom" type="datetime-local">
         </div>
@@ -233,6 +229,7 @@
     </div>
   </footer>
 
+  <script src="/static/js/dom.js"></script>
   <script>
   function toggleNav() {
     document.querySelector('.md-nav').classList.toggle('open');
@@ -263,8 +260,7 @@
   const selectedMessageIDs = new Set();
 
   function readHeaders() {
-    const key = document.getElementById('apiKey').value.trim();
-    return key ? { 'X-API-Key': key } : {};
+    return {};
   }
 
   function localDateTimeValueFromRFC3339(raw) {
@@ -312,7 +308,7 @@
       suppressed: 'md-badge--warn'
     };
     const cls = map[kind] || 'md-badge--neutral';
-    return '<span class="md-badge ' + cls + '">' + label + '</span>';
+    return maildDOM.el('span', label, 'md-badge ' + cls);
   }
 
   function formatTime(raw) {
@@ -323,18 +319,20 @@
   }
 
   function renderMessages(messages) {
-    messageRowsEl.innerHTML = '';
+    messageRowsEl.replaceChildren();
     for (const m of messages || []) {
       const tr = document.createElement('tr');
-      const checked = selectedMessageIDs.has(m.id) ? 'checked' : '';
-      tr.innerHTML =
-        '<td><input type="checkbox" class="msg-check" data-id="' + m.id + '" ' + checked + '></td>' +
-        '<td>' + m.id + '</td>' +
-        '<td>' + (m.to_email || 'n/a') + '</td>' +
-        '<td>' + (m.subject || 'n/a') + '</td>' +
-        '<td>' + statusBadge(m.status, m.status) + '</td>' +
-        '<td>' + formatTime(m.created_at) + '</td>' +
-        '<td>' + formatTime(m.updated_at) + '</td>';
+      const checkbox = maildDOM.el('input', null, 'msg-check');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.id = String(m.id);
+      checkbox.checked = selectedMessageIDs.has(m.id);
+      const selectCell = maildDOM.el('td');
+      selectCell.appendChild(checkbox);
+      tr.append(selectCell, maildDOM.el('td', m.id), maildDOM.el('td', m.to_email || 'n/a'),
+        maildDOM.el('td', m.subject || 'n/a'));
+      const statusCell = maildDOM.el('td');
+      statusCell.appendChild(statusBadge(m.status, m.status));
+      tr.append(statusCell, maildDOM.el('td', formatTime(m.created_at)), maildDOM.el('td', formatTime(m.updated_at)));
       tr.addEventListener('click', (e) => {
         if (e.target.classList.contains('msg-check')) return;
         selectedIdEl.value = m.id;

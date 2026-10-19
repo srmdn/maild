@@ -35,10 +35,6 @@
 
     <section class="md-panel">
       <h3>Session Controls</h3>
-      <div class="md-form-row">
-        <label class="md-label" for="apiKey">API Key</label>
-        <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
-      </div>
       <div class="md-grid md-grid-2">
         <div class="md-form-row">
           <label class="md-label" for="domain">Domain (optional)</label>
@@ -87,6 +83,7 @@
     </div>
   </footer>
 
+  <script src="/static/js/dom.js"></script>
   <script>
   function toggleNav() {
     document.querySelector('.md-nav').classList.toggle('open');
@@ -106,8 +103,7 @@
   const statusEl = document.getElementById('status');
 
   function headers() {
-    const key = document.getElementById('apiKey').value.trim();
-    return key ? { 'X-API-Key': key } : {};
+    return {};
   }
 
   function setState(kind, message) {
@@ -139,15 +135,19 @@
 
   function renderChecklist(payload) {
     const items = Array.isArray(payload.items) ? payload.items : [];
-    rowsEl.innerHTML = '';
+    rowsEl.replaceChildren();
     for (const item of items) {
       const tr = document.createElement('tr');
       const badgeClass = item.done ? 'md-badge md-badge--ok' : 'md-badge md-badge--warn';
-      tr.innerHTML =
-        '<td><strong>' + (item.title || item.id || 'Untitled') + '</strong><div class="md-muted">' + (item.description || '') + '</div></td>' +
-        '<td><span class="' + badgeClass + '">' + (item.done ? 'done' : 'pending') + '</span></td>' +
-        '<td><code>' + (item.evidence || 'n/a') + '</code></td>' +
-        '<td><code>' + (item.action || 'n/a') + '</code></td>';
+      const title = maildDOM.el('td');
+      title.append(maildDOM.el('strong', item.title || item.id || 'Untitled'), maildDOM.el('div', item.description || '', 'md-muted'));
+      const status = maildDOM.el('td');
+      status.appendChild(maildDOM.el('span', item.done ? 'done' : 'pending', badgeClass));
+      const evidence = maildDOM.el('td');
+      evidence.appendChild(maildDOM.el('code', item.evidence || 'n/a'));
+      const action = maildDOM.el('td');
+      action.appendChild(maildDOM.el('code', item.action || 'n/a'));
+      tr.append(title, status, evidence, action);
       rowsEl.appendChild(tr);
     }
     setState('ready', 'Checklist loaded. Completed: ' + (payload.completed || 0) + '/' + (payload.total || 0));

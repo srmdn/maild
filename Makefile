@@ -3,7 +3,7 @@ MAIN_PACKAGE=./cmd/server
 VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/srmdn/maild/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: setup run version build release test test-store tidy fmt-check check-attribution vuln verify verify-full
+.PHONY: setup run version build release test test-store test-auth tidy fmt-check check-attribution vuln verify verify-full
 
 setup:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -33,6 +33,14 @@ test:
 
 test-store:
 	MAILD_TEST_DSN=postgres://maild:maild@localhost:5432/maild_test?sslmode=disable go test ./internal/store/postgres -count=1 -v
+
+# These databases must be disposable and separate: store tests truncate fixtures.
+test-auth:
+	@test -n "$$MAILD_TEST_DSN" || { echo "Set MAILD_TEST_DSN to a dedicated store-test database."; exit 1; }
+	@test -n "$$MAILD_HTTP_TEST_DSN" || { echo "Set MAILD_HTTP_TEST_DSN to a separate HTTP-test database."; exit 1; }
+	@test -n "$$MAILD_HTTP_TEST_REDIS_ADDR" || { echo "Set MAILD_HTTP_TEST_REDIS_ADDR to a test Redis instance."; exit 1; }
+	@test "$$MAILD_TEST_DSN" != "$$MAILD_HTTP_TEST_DSN" || { echo "Store and HTTP test databases must be separate."; exit 1; }
+	go test ./internal/auth ./internal/api ./internal/store/postgres ./internal/httpserver ./internal/migrate -count=1 -v
 
 tidy:
 	go mod tidy

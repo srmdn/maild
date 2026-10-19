@@ -93,6 +93,7 @@ func (s *Store) GetUserWorkspace(ctx context.Context, userID int64) (domain.User
 		 JOIN user_workspaces uw ON uw.user_id = u.id
 		 JOIN workspaces w ON w.id = uw.workspace_id
 		 WHERE u.id = $1
+		 ORDER BY uw.created_at, uw.workspace_id
 		 LIMIT 1`,
 		userID,
 	)
@@ -171,15 +172,18 @@ func (s *Store) GetOnboardingChecklistItems(ctx context.Context, workspaceID int
 	return
 }
 
-func (s *Store) CreateAPIKey(ctx context.Context, userID int64, name, keyHash string) (domain.UserAPIKey, error) {
+func (s *Store) CreateAPIKey(ctx context.Context, userID, workspaceID int64, name, keyHash, keyPrefix string) (domain.UserAPIKey, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`INSERT INTO user_api_keys (user_id, name, key_hash) VALUES ($1, $2, $3) RETURNING id, user_id, name, last_used_at, created_at`,
-		userID, name, keyHash,
+		`INSERT INTO user_api_keys (user_id, workspace_id, name, key_hash, key_prefix)
+		 SELECT $1, $2, $3, $4, $5 WHERE EXISTS (
+		 SELECT 1 FROM user_workspaces WHERE user_id = $1 AND workspace_id = $2 AND role IN ('admin', 'operator'))
+		 RETURNING id, user_id, workspace_id, name, key_prefix, last_used_at, created_at`,
+		userID, workspaceID, name, keyHash, keyPrefix,
 	)
 	var k domain.UserAPIKey
 	var lastUsed sql.NullTime
-	err := row.Scan(&k.ID, &k.UserID, &k.Name, &lastUsed, &k.CreatedAt)
+	err := row.Scan(&k.ID, &k.UserID, &k.WorkspaceID, &k.Name, &k.KeyPrefix, &lastUsed, &k.CreatedAt)
 	if err != nil {
 		return domain.UserAPIKey{}, err
 	}
@@ -189,11 +193,11 @@ func (s *Store) CreateAPIKey(ctx context.Context, userID int64, name, keyHash st
 	return k, nil
 }
 
-func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]domain.UserAPIKey, error) {
+func (s *Store) ListAPIKeys(ctx context.Context, userID, workspaceID int64) ([]domain.UserAPIKey, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, user_id, name, last_used_at, created_at FROM user_api_keys WHERE user_id = $1 ORDER BY created_at DESC`,
-		userID,
+		`SELECT id, user_id, workspace_id, name, key_prefix, last_used_at, created_at FROM user_api_keys WHERE user_id = $1 AND workspace_id = $2 ORDER BY created_at DESC`,
+		userID, workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -204,7 +208,7 @@ func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]domain.UserAPI
 	for rows.Next() {
 		var k domain.UserAPIKey
 		var lastUsed sql.NullTime
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &lastUsed, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.UserID, &k.WorkspaceID, &k.Name, &k.KeyPrefix, &lastUsed, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		if lastUsed.Valid {
@@ -215,11 +219,11 @@ func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]domain.UserAPI
 	return out, rows.Err()
 }
 
-func (s *Store) DeleteAPIKey(ctx context.Context, userID, keyID int64) error {
+func (s *Store) DeleteAPIKey(ctx context.Context, userID, workspaceID, keyID int64) error {
 	result, err := s.db.ExecContext(
 		ctx,
-		`DELETE FROM user_api_keys WHERE id = $1 AND user_id = $2`,
-		keyID, userID,
+		`DELETE FROM user_api_keys WHERE id = $1 AND user_id = $2 AND workspace_id = $3`,
+		keyID, userID, workspaceID,
 	)
 	if err != nil {
 		return err
@@ -232,4 +236,15 @@ func (s *Store) DeleteAPIKey(ctx context.Context, userID, keyID int64) error {
 		return errors.New("api key not found")
 	}
 	return nil
+}
+
+// AuthenticateAPIKey always joins current membership, so revocation, removal, and
+// role changes take effect on the next request. Only key hashes reach storage.
+func (s *Store) AuthenticateAPIKey(ctx context.Context, keyHash string) (domain.APIKeyIdentity, error) {
+	var identity domain.APIKeyIdentity
+	err := s.db.QueryRowContext(ctx, `UPDATE user_api_keys k SET last_used_at = now()
+ FROM user_workspaces uw
+ WHERE k.key_hash = $1 AND uw.user_id = k.user_id AND uw.workspace_id = k.workspace_id
+ RETURNING k.user_id, k.workspace_id, uw.role`, keyHash).Scan(&identity.UserID, &identity.WorkspaceID, &identity.Role)
+	return identity, err
 }

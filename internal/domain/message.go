@@ -1,6 +1,11 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrMessageNotFound = errors.New("message not found")
 
 type Message struct {
 	ID          int64      `json:"id"`

@@ -17,12 +17,13 @@ type UserWithWorkspace struct {
 }
 
 type UserAPIKey struct {
-	ID         int64      `json:"id"`
-	UserID     int64      `json:"user_id"`
-	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"key_prefix"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID          int64      `json:"id"`
+	UserID      int64      `json:"user_id"`
+	WorkspaceID int64      `json:"workspace_id"`
+	Name        string     `json:"name"`
+	KeyPrefix   string     `json:"key_prefix"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type CreateAPIKeyResponse struct {
@@ -31,4 +32,10 @@ type CreateAPIKeyResponse struct {
 	Key       string `json:"key"`
 	KeyPrefix string `json:"key_prefix"`
 	CreatedAt string `json:"created_at"`
+}
+
+type APIKeyIdentity struct {
+	UserID      int64
+	WorkspaceID int64
+	Role        string
 }

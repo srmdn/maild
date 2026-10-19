@@ -61,91 +61,94 @@ func NewHandler(
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	withAPIKey := func(next http.HandlerFunc) http.HandlerFunc {
-		return auth.APIKeyMiddleware(h.apiKeyHeader, h.adminAPIKey, h.operatorAPIKey, next)
+	withAccess := func(next http.HandlerFunc) http.HandlerFunc {
+		if h.authHandler != nil {
+			return h.authHandler.RequireCredentials(h.apiKeyHeader, h.adminAPIKey, h.operatorAPIKey, next)
+		}
+		return auth.APIKeyMiddleware(h.apiKeyHeader, h.adminAPIKey, h.operatorAPIKey, nil, next)
 	}
 	withUIAccess := func(next http.HandlerFunc) http.HandlerFunc {
 		if h.authHandler != nil {
-			return h.authHandler.RequireAuth(next)
+			return h.authHandler.RequireAuth(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(next))
 		}
-		return withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(next))
+		return withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(next))
 	}
 
 	mux.HandleFunc(
 		"/v1/messages",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.createMessage)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.createMessage)),
 	)
 	mux.HandleFunc(
 		"/v1/suppressions",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.createSuppression)),
+		withAccess(auth.RequireRole(auth.RoleAdmin)(h.createSuppression)),
 	)
 	mux.HandleFunc(
 		"/v1/unsubscribes",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.createUnsubscribe)),
+		withAccess(auth.RequireRole(auth.RoleAdmin)(h.createUnsubscribe)),
 	)
 	mux.HandleFunc(
 		"/v1/smtp-accounts",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
+		withAccess(auth.RequireRole(auth.RoleAdmin)(h.upsertSMTPAccount)),
 	)
 	mux.HandleFunc(
 		"/v1/smtp-accounts/activate",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.activateSMTPAccount)),
+		withAccess(auth.RequireRole(auth.RoleAdmin)(h.activateSMTPAccount)),
 	)
 	mux.HandleFunc(
 		"/v1/smtp-accounts/list",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.listSMTPAccounts)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.listSMTPAccounts)),
 	)
 	mux.HandleFunc(
 		"/v1/domains/readiness",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.checkDomainReadiness)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.checkDomainReadiness)),
 	)
 	mux.HandleFunc(
 		"/v1/smtp-accounts/validate",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin)(h.validateSMTPAccount)),
+		withAccess(auth.RequireRole(auth.RoleAdmin)(h.validateSMTPAccount)),
 	)
 	mux.HandleFunc(
 		"/v1/messages/timeline",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageTimeline)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.messageTimeline)),
 	)
 	mux.HandleFunc(
 		"/v1/ops/onboarding-checklist",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.onboardingChecklist)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.onboardingChecklist)),
 	)
 	mux.HandleFunc(
 		"/v1/incidents/bundle",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.incidentBundleExport)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.incidentBundleExport)),
 	)
 	mux.HandleFunc(
 		"/v1/messages/logs",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.messageLogs)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.messageLogs)),
 	)
 	mux.HandleFunc(
 		"/v1/messages/retry",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.retryMessages)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.retryMessages)),
 	)
 	mux.HandleFunc(
 		"/v1/webhooks/logs",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.webhookLogs)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.webhookLogs)),
 	)
 	mux.HandleFunc(
 		"/v1/webhooks/replay",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.replayWebhookDeadLetters)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.replayWebhookDeadLetters)),
 	)
 	mux.HandleFunc(
 		"/v1/workspaces/policy",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.workspacePolicy)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.workspacePolicy)),
 	)
 	mux.HandleFunc(
 		"/v1/analytics/summary",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.analyticsSummary)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.analyticsSummary)),
 	)
 	mux.HandleFunc(
 		"/v1/analytics/export.csv",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.analyticsExportCSV)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.analyticsExportCSV)),
 	)
 	mux.HandleFunc(
 		"/v1/billing/metering",
-		withAPIKey(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(h.billingMetering)),
+		withAccess(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer)(h.billingMetering)),
 	)
 	mux.HandleFunc(
 		"/ui/policy",
@@ -352,8 +355,10 @@ func (h *Handler) createMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	if strings.TrimSpace(req.FromEmail) == "" || strings.TrimSpace(req.ToEmail) == "" || strings.TrimSpace(req.Subject) == "" {
 		http.Error(w, "from_email, to_email, and subject are required", http.StatusBadRequest)
@@ -400,8 +405,10 @@ func (h *Handler) createSuppression(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	if strings.TrimSpace(req.Email) == "" {
 		http.Error(w, "email is required", http.StatusBadRequest)
@@ -445,8 +452,10 @@ func (h *Handler) createUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	if strings.TrimSpace(req.Email) == "" {
 		http.Error(w, "email is required", http.StatusBadRequest)
@@ -494,8 +503,10 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
 		req.Name = "default"
@@ -548,8 +559,10 @@ func (h *Handler) activateSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
@@ -575,9 +588,8 @@ func (h *Handler) listSMTPAccounts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	accounts, err := h.messages.SMTPAccounts(r.Context(), workspaceID)
@@ -618,8 +630,10 @@ func (h *Handler) checkDomainReadiness(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 	if strings.TrimSpace(req.Domain) == "" {
 		http.Error(w, "domain is required", http.StatusBadRequest)
@@ -660,8 +674,10 @@ func (h *Handler) validateSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 
 	provider, err := h.messages.ValidateSMTPAccount(r.Context(), req.WorkspaceID)
@@ -688,14 +704,22 @@ func (h *Handler) messageTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	messageID, err := parseInt64Query(r, "message_id", 0)
-	if err != nil || messageID == 0 {
+	if err != nil || messageID <= 0 {
 		http.Error(w, "message_id is required", http.StatusBadRequest)
 		return
 	}
 
 	message, attempts, err := h.messages.MessageTimeline(r.Context(), messageID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		if errors.Is(err, domain.ErrMessageNotFound) {
+			writeError(w, http.StatusNotFound, "message not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
+		}
+		return
+	}
+	if _, err := auth.Workspace(r.Context(), message.WorkspaceID); err != nil {
+		writeError(w, http.StatusNotFound, "message not found")
 		return
 	}
 
@@ -712,9 +736,8 @@ func (h *Handler) onboardingChecklist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -734,7 +757,7 @@ func (h *Handler) onboardingChecklist(w http.ResponseWriter, r *http.Request) {
 			Done:        false,
 			Action:      "POST /v1/domains/readiness",
 		}
-		result, readinessErr := h.domains.CheckReadiness(r.Context(), workspaceID, domainName, dkimSelector)
+		result, readinessErr := h.domains.InspectReadiness(r.Context(), domainName, dkimSelector)
 		if readinessErr != nil {
 			item.Evidence = "domain readiness check failed"
 		} else {
@@ -761,9 +784,8 @@ func (h *Handler) incidentBundleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	messageID, err := parseInt64Query(r, "message_id", 0)
@@ -774,7 +796,7 @@ func (h *Handler) incidentBundleExport(w http.ResponseWriter, r *http.Request) {
 
 	bundle, err := h.messages.IncidentBundle(r.Context(), workspaceID, messageID)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "workspace mismatch") {
+		if errors.Is(err, domain.ErrMessageNotFound) || strings.Contains(strings.ToLower(err.Error()), "workspace mismatch") {
 			writeError(w, http.StatusNotFound, "message not found for workspace")
 			return
 		}
@@ -794,9 +816,8 @@ func (h *Handler) messageLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	limitRaw := r.URL.Query().Get("limit")
@@ -834,9 +855,8 @@ func (h *Handler) webhookLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	limitRaw := r.URL.Query().Get("limit")
@@ -880,8 +900,10 @@ func (h *Handler) replayWebhookDeadLetters(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 
 	result, err := h.messages.ReplayWebhookDeadLetters(r.Context(), req.WorkspaceID, req.EventIDs, req.Limit)
@@ -913,8 +935,10 @@ func (h *Handler) retryMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.WorkspaceID == 0 {
-		req.WorkspaceID = 1
+	var ok bool
+	req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+	if !ok {
+		return
 	}
 
 	result, err := h.messages.RetryMessages(r.Context(), req.WorkspaceID, req.MessageIDs, req.Limit)
@@ -939,9 +963,8 @@ func (h *Handler) retryMessages(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) workspacePolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-		if err != nil {
-			http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+		workspaceID, ok := workspaceFromQuery(w, r)
+		if !ok {
 			return
 		}
 		policy, err := h.messages.WorkspacePolicy(r.Context(), workspaceID)
@@ -963,8 +986,10 @@ func (h *Handler) workspacePolicy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid JSON body", http.StatusBadRequest)
 			return
 		}
-		if req.WorkspaceID == 0 {
-			req.WorkspaceID = 1
+		var ok bool
+		req.WorkspaceID, ok = resolveWorkspace(w, r, req.WorkspaceID)
+		if !ok {
+			return
 		}
 		err := h.messages.UpsertWorkspacePolicy(r.Context(), domain.WorkspacePolicy{
 			WorkspaceID:               req.WorkspaceID,
@@ -994,9 +1019,8 @@ func (h *Handler) workspacePolicyUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	policy, err := h.messages.WorkspacePolicy(r.Context(), workspaceID)
@@ -1026,9 +1050,8 @@ func (h *Handler) messageLogsUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -1046,9 +1069,8 @@ func (h *Handler) analyticsSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	from, to := parseFromTo(r)
@@ -1072,9 +1094,8 @@ func (h *Handler) billingMetering(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	from, to := parseFromTo(r)
@@ -1098,9 +1119,8 @@ func (h *Handler) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceID, err := parseInt64Query(r, "workspace_id", 1)
-	if err != nil {
-		http.Error(w, "invalid workspace_id", http.StatusBadRequest)
+	workspaceID, ok := workspaceFromQuery(w, r)
+	if !ok {
 		return
 	}
 	limit := 500

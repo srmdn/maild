@@ -19,11 +19,10 @@ import (
 )
 
 type Server struct {
-	http           *http.Server
-	deps           *runtime.DependencyState
-	authHandler    *auth.AuthHandler
-	operatorAPIKey string
-	staticFS       fs.FS
+	http        *http.Server
+	deps        *runtime.DependencyState
+	authHandler *auth.AuthHandler
+	staticFS    fs.FS
 }
 
 var (
@@ -43,19 +42,19 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 
 	if authHandler != nil {
 		mux.HandleFunc("GET "+cfg.LoginPath, authHandler.LoginPage)
-		mux.HandleFunc("POST "+cfg.LoginPath, authHandler.Login)
-		mux.HandleFunc("/logout", authHandler.Logout)
+		mux.HandleFunc("POST "+cfg.LoginPath, auth.SameOrigin(authHandler.Login))
+		mux.HandleFunc("/logout", auth.SameOrigin(authHandler.Logout))
 		mux.HandleFunc("/me", authHandler.Me)
 		if cfg.AllowSignup {
 			mux.HandleFunc("GET /signup", authHandler.SignupPage)
-			mux.HandleFunc("POST /api/v1/auth/signup", authHandler.Signup)
+			mux.HandleFunc("POST /api/v1/auth/signup", auth.SameOrigin(authHandler.Signup))
 		}
 		mux.HandleFunc("/api/v1/onboarding/checklist", authHandler.RequireAuth(authHandler.GetOnboardingChecklist))
 		mux.HandleFunc("/api/v1/user/keys", authHandler.RequireAuth(authHandler.ListAPIKeys))
-		mux.HandleFunc("POST /api/v1/user/keys/create", authHandler.RequireAuth(authHandler.CreateAPIKey))
+		mux.HandleFunc("POST /api/v1/user/keys/create", authHandler.RequireAuth(auth.RequireRole(auth.RoleAdmin, auth.RoleOperator)(authHandler.CreateAPIKey)))
 		mux.HandleFunc("DELETE /api/v1/user/keys", authHandler.RequireAuth(authHandler.DeleteAPIKey))
 		mux.HandleFunc("/dashboard", authHandler.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
-			handleDashboard(w, r, authHandler, cfg.OperatorAPIKey, cfg.LoginPath)
+			handleDashboard(w, r, cfg.LoginPath)
 		}))
 	}
 
@@ -93,11 +92,10 @@ func New(cfg config.Config, logger *slog.Logger, deps *runtime.DependencyState, 
 	}
 
 	return &Server{
-		http:           srv,
-		deps:           deps,
-		authHandler:    authHandler,
-		operatorAPIKey: cfg.OperatorAPIKey,
-		staticFS:       staticFS,
+		http:        srv,
+		deps:        deps,
+		authHandler: authHandler,
+		staticFS:    staticFS,
 	}
 }
 
@@ -172,7 +170,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request, cfg config.Config) {
 	_, _ = w.Write(buf.Bytes())
 }
 
-func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.AuthHandler, operatorAPIKey, loginPath string) {
+func handleDashboard(w http.ResponseWriter, r *http.Request, loginPath string) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -181,15 +179,13 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, authHandler *auth.A
 
 	workspaceID, _ := auth.WorkspaceIDFromContext(r.Context())
 	data := struct {
-		UserID         int64
-		WorkspaceID    int64
-		OperatorAPIKey string
-		LoginPath      string
+		UserID      int64
+		WorkspaceID int64
+		LoginPath   string
 	}{
-		UserID:         userID,
-		WorkspaceID:    workspaceID,
-		OperatorAPIKey: operatorAPIKey,
-		LoginPath:      loginPath,
+		UserID:      userID,
+		WorkspaceID: workspaceID,
+		LoginPath:   loginPath,
 	}
 
 	var buf bytes.Buffer

@@ -35,10 +35,6 @@
 
     <section class="md-panel">
       <h3>Session Controls</h3>
-      <div class="md-form-row">
-        <label class="md-label" for="apiKey">API Key</label>
-        <input class="md-input" id="apiKey" type="text" placeholder="change-me-operator">
-      </div>
       <div class="md-grid md-grid-2">
         <div class="md-form-row">
           <label class="md-label" for="messageId">Message ID</label>
@@ -78,6 +74,7 @@
     </div>
   </footer>
 
+  <script src="/static/js/dom.js"></script>
   <script>
   function toggleNav() {
     document.querySelector('.md-nav').classList.toggle('open');
@@ -98,8 +95,7 @@
   const downloadEl = document.getElementById('download');
 
   function headers() {
-    const key = document.getElementById('apiKey').value.trim();
-    return key ? { 'X-API-Key': key } : {};
+    return {};
   }
 
   function setLoading(message) {
@@ -117,25 +113,21 @@
   }
 
   function renderTimeline(bundle) {
-    timelineEl.innerHTML = '';
+    timelineEl.replaceChildren();
     const message = bundle.message || {};
     const attempts = Array.isArray(bundle.attempts) ? bundle.attempts : [];
-    const webhooks = Array.isArray(bundle.webhook_events) ? bundle.webhook_events : [];
-
-    const top = document.createElement('li');
-    top.innerHTML = '<strong>Message</strong><span>' + (message.id || 'n/a') + ' &middot; ' + (message.status || 'unknown') + '</span>';
-    timelineEl.appendChild(top);
-
-    for (const a of attempts) {
-      const li = document.createElement('li');
-      li.innerHTML = '<strong>Attempt #' + (a.attempt_number || '?') + '</strong><span>' + (a.status || 'unknown') + ' &middot; ' + (a.provider || 'n/a') + '</span>';
-      timelineEl.appendChild(li);
+    const webhooks = Array.isArray(bundle.webhook_outcomes) ? bundle.webhook_outcomes : [];
+    function addEntry(title, detail) {
+      const item = maildDOM.el('li');
+      item.append(maildDOM.el('strong', title), maildDOM.el('span', detail));
+      timelineEl.appendChild(item);
     }
-
+    addEntry('Message', (message.id || 'n/a') + ' \u00b7 ' + (message.status || 'unknown'));
+    for (const a of attempts) {
+      addEntry('Attempt #' + (a.attempt_no || '?'), (a.success ? 'sent' : 'failed') + ' \u00b7 ' + (a.smtp_provider || 'n/a'));
+    }
     for (const e of webhooks) {
-      const li = document.createElement('li');
-      li.innerHTML = '<strong>Webhook</strong><span>' + (e.type || 'unknown') + ' &middot; ' + (e.status || 'unknown') + '</span>';
-      timelineEl.appendChild(li);
+      addEntry('Webhook', (e.event_type || 'unknown') + ' \u00b7 ' + (e.status || 'unknown'));
     }
 
     timelineEmptyEl.hidden = true;
@@ -162,12 +154,12 @@
         status: 'failed'
       },
       attempts: [
-        { attempt_number: 1, status: 'failed', provider: 'smtp-primary' },
-        { attempt_number: 2, status: 'failed', provider: 'smtp-secondary' }
+        { attempt_no: 1, success: false, smtp_provider: 'smtp-primary' },
+        { attempt_no: 2, success: false, smtp_provider: 'smtp-secondary' }
       ],
-      webhook_events: [
-        { type: 'bounce', status: 'processed' },
-        { type: 'complaint', status: 'dead_letter' }
+      webhook_outcomes: [
+        { event_type: 'bounce', status: 'processed' },
+        { event_type: 'complaint', status: 'dead_letter' }
       ]
     };
   }

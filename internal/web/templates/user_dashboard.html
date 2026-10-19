@@ -148,11 +148,7 @@
           <p class="dash-panel-title">Your Workspace</p>
           <h2 class="dash-workspace-name" id="workspaceDisplay">-</h2>
           <p class="dash-workspace-meta">Workspace ID: <span id="workspaceId">-</span> / Role: <span id="userRole">-</span></p>
-          <p class="dash-api-key-label">API Key</p>
-          <div class="dash-api-key-box">
-            <code class="dash-api-key" id="apiKey">Loading...</code>
-            <button class="dash-api-key-copy" id="copyKey">Copy</button>
-          </div>
+          <p class="md-muted">Create a personal API key below to connect your application. New key values are shown only once.</p>
         </div>
 
         <div id="onboardingPanel" class="dash-panel dash-onboarding" style="margin-bottom: 24px;">
@@ -262,6 +258,7 @@
     </div>
   </div>
 
+  <script src="/static/js/dom.js"></script>
   <script>
     function toggleDashNav() {
       document.getElementById('dashNav').classList.toggle('open');
@@ -272,7 +269,6 @@
       }
     });
 
-    const API_KEY = '{{.OperatorAPIKey}}';
     const WORKSPACE_ID = {{.WorkspaceID}};
     const LOGIN_PATH = '{{.LoginPath}}';
 
@@ -291,7 +287,6 @@
       document.getElementById('userRole').textContent = user.role;
       document.getElementById('accountEmail').textContent = user.email;
       document.getElementById('accountWorkspace').textContent = user.workspace_name;
-      document.getElementById('apiKey').textContent = API_KEY;
       const date = new Date(user.created_at);
       document.getElementById('createdAt').textContent = date.toLocaleDateString();
     }
@@ -314,19 +309,18 @@
       }
 
       const itemsEl = document.getElementById('onboardingItems');
-      itemsEl.innerHTML = '';
+      itemsEl.replaceChildren();
       for (const item of data.items) {
-        const div = document.createElement('div');
-        div.className = 'dash-onboarding-item';
-        div.innerHTML =
-          '<div class="dash-onboarding-item-icon ' + (item.done ? 'done' : 'pending') + '">' +
-            (item.done ? '&#10003;' : '&#8211;') +
-          '</div>' +
-          '<div class="dash-onboarding-item-content">' +
-            '<p class="dash-onboarding-item-title">' + item.title + '</p>' +
-            '<p class="dash-onboarding-item-desc">' + item.description + '</p>' +
-            (!item.done && item.action_href ? '<a href="' + item.action_href + '" class="dash-onboarding-item-link">' + item.action_label + ' &#8594;</a>' : '') +
-          '</div>';
+        const div = maildDOM.el('div', null, 'dash-onboarding-item');
+        div.appendChild(maildDOM.el('div', item.done ? '\u2713' : '\u2013',
+          'dash-onboarding-item-icon ' + (item.done ? 'done' : 'pending')));
+        const content = maildDOM.el('div', null, 'dash-onboarding-item-content');
+        content.append(maildDOM.el('p', item.title, 'dash-onboarding-item-title'),
+          maildDOM.el('p', item.description, 'dash-onboarding-item-desc'));
+        if (!item.done && item.action_href) {
+          content.appendChild(maildDOM.localLink(item.action_href, item.action_label + ' \u2192', 'dash-onboarding-item-link'));
+        }
+        div.appendChild(content);
         itemsEl.appendChild(div);
       }
 
@@ -334,13 +328,6 @@
         panel.classList.add('dash-onboarding-complete');
       }
     }
-
-    document.getElementById('copyKey').addEventListener('click', () => {
-      navigator.clipboard.writeText(API_KEY);
-      const toast = document.getElementById('toast');
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2000);
-    });
 
     document.getElementById('logout').addEventListener('click', async () => {
       await fetch('/logout', { method: 'POST' });
@@ -354,25 +341,26 @@
       const listEl = document.getElementById('keysList');
       const emptyEl = document.getElementById('keysEmpty');
       if (keys.length === 0) {
-        listEl.innerHTML = '';
+        listEl.replaceChildren();
         emptyEl.style.display = 'block';
         return;
       }
       emptyEl.style.display = 'none';
-      listEl.innerHTML = '';
+      listEl.replaceChildren();
       for (const k of keys) {
         const div = document.createElement('div');
         div.className = 'dash-key-item';
-        div.innerHTML =
-          '<div class="dash-key-meta">' +
-            '<p class="dash-key-name">' + k.name + '</p>' +
-            '<div class="dash-key-meta-row">' +
-              '<span>' + k.key_prefix + '...</span>' +
-              '<span>Created ' + new Date(k.created_at).toLocaleDateString() + '</span>' +
-              (k.last_used_at ? '<span>Used ' + new Date(k.last_used_at).toLocaleDateString() + '</span>' : '') +
-            '</div>' +
-          '</div>' +
-          '<button class="dash-key-delete" data-id="' + k.id + '">Delete</button>';
+        const meta = maildDOM.el('div', null, 'dash-key-meta');
+        meta.appendChild(maildDOM.el('p', k.name, 'dash-key-name'));
+        const row = maildDOM.el('div', null, 'dash-key-meta-row');
+        row.append(maildDOM.el('span', k.key_prefix ? k.key_prefix + '...' : 'Legacy key'),
+          maildDOM.el('span', 'Created ' + new Date(k.created_at).toLocaleDateString()));
+        if (k.last_used_at) row.appendChild(maildDOM.el('span', 'Used ' + new Date(k.last_used_at).toLocaleDateString()));
+        meta.appendChild(row);
+        const button = maildDOM.el('button', 'Delete', 'dash-key-delete');
+        button.type = 'button';
+        button.dataset.id = String(k.id);
+        div.append(meta, button);
         listEl.appendChild(div);
       }
       document.querySelectorAll('.dash-key-delete').forEach(btn => {
