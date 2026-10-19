@@ -159,7 +159,7 @@ func TestApplyWebhookBounceClassification(t *testing.T) {
 func TestProcessTemporaryBounceIsAuditedWithoutSuppression(t *testing.T) {
 	store := &replayStore{}
 	svc := NewMessageService(store, nil, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
-	event, err := svc.ProcessWebhookEvent(context.Background(), 1, "bounce_temporary", "user@example.com", "Transient/General", `{"fixture":true}`)
+	event, err := svc.ProcessWebhookEvent(context.Background(), 1, "bounce_temporary", "user@example.com", "Transient/General", `{"fixture":true}`, "")
 	if err != nil {
 		t.Fatalf("ProcessWebhookEvent error = %v", err)
 	}
@@ -171,12 +171,62 @@ func TestProcessTemporaryBounceIsAuditedWithoutSuppression(t *testing.T) {
 	}
 }
 
+func TestWebhookIdentityKeyFallbackIsDeterministicAndEventScoped(t *testing.T) {
+	first := webhookIdentityKey(1, "bounce_permanent", "user@example.com", "Permanent/General", `{}`, "")
+	duplicate := webhookIdentityKey(1, "bounce_permanent", "user@example.com", "Permanent/General", `{}`, "")
+	differentRecipient := webhookIdentityKey(1, "bounce_permanent", "other@example.com", "Permanent/General", `{}`, "")
+	if first != duplicate {
+		t.Fatalf("identical webhook identity keys differ: %q != %q", first, duplicate)
+	}
+	if first == differentRecipient {
+		t.Fatalf("different recipients share webhook identity key %q", first)
+	}
+}
+
+func TestReplayWebhookDeadLettersUsesAtomicStoreClaim(t *testing.T) {
+	store := &atomicReplayStore{
+		replayStore: &replayStore{
+			deadLetters: []domain.WebhookEvent{{ID: 55, WorkspaceID: 3, EventType: "complaint", Email: "user@example.com", Status: "dead_letter", AttemptCount: 1}},
+			byID:        map[int64]domain.WebhookEvent{55: {ID: 55, WorkspaceID: 3, EventType: "complaint", Email: "user@example.com", Status: "dead_letter", AttemptCount: 1}},
+		},
+		result:  domain.WebhookEvent{ID: 55, WorkspaceID: 3, EventType: "complaint", Email: "user@example.com", Status: "replayed", AttemptCount: 2},
+		claimed: true,
+	}
+	svc := NewMessageService(store, nil, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+	result, err := svc.ReplayWebhookDeadLetters(context.Background(), 3, []int64{55}, 0)
+	if err != nil {
+		t.Fatalf("ReplayWebhookDeadLetters error = %v", err)
+	}
+	if result.Replayed != 1 || result.Failed != 0 || store.replayCalls != 1 {
+		t.Fatalf("result = %#v, atomic replay calls = %d; want one atomic replay", result, store.replayCalls)
+	}
+}
+
 type replayStore struct {
 	deadLetters      []domain.WebhookEvent
 	byID             map[int64]domain.WebhookEvent
 	updated          map[int64]replayUpdate
 	suppressionCalls []suppressionCall
 	inserted         []domain.WebhookEvent
+}
+
+type atomicReplayStore struct {
+	*replayStore
+	result      domain.WebhookEvent
+	claimed     bool
+	replayCalls int
+}
+
+func (s *atomicReplayStore) ProcessWebhookEventAtomic(_ context.Context, event domain.WebhookEvent) (domain.WebhookEvent, error) {
+	return event, nil
+}
+
+func (s *atomicReplayStore) ReplayWebhookEventAtomic(_ context.Context, workspaceID, eventID int64) (domain.WebhookEvent, bool, error) {
+	s.replayCalls++
+	if workspaceID != s.result.WorkspaceID || eventID != s.result.ID {
+		return domain.WebhookEvent{}, false, nil
+	}
+	return s.result, s.claimed, nil
 }
 
 type replayUpdate struct {

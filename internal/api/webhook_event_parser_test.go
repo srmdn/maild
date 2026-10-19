@@ -104,6 +104,17 @@ func TestParseWebhookEventsProviderBounceClassification(t *testing.T) {
 	}
 }
 
+func TestParseWebhookEventsProviderIdentity(t *testing.T) {
+	body := []byte(`[{"event":"bounce","email":"a@example.com","sg_event_id":"provider-event-42"}]`)
+	events, _, err := parseWebhookEvents(body)
+	if err != nil {
+		t.Fatalf("parseWebhookEvents error = %v", err)
+	}
+	if len(events) != 1 || events[0].Identity != "sendgrid:provider-event-42:bounce_unclassified:a@example.com" {
+		t.Fatalf("event identity = %#v, want namespaced SendGrid ID", events)
+	}
+}
+
 func TestParseWebhookEventsRejectInvalidPayload(t *testing.T) {
 	body := []byte(`[{"event":"processed","email":"nope@example.com"}]`)
 	_, _, err := parseWebhookEvents(body)

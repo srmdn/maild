@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"strconv"
@@ -616,12 +618,17 @@ func (s *Store) ExportMessageLogsCSV(ctx context.Context, workspaceID int64, lim
 }
 
 func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (domain.WebhookEvent, error) {
+	if e.IdentityKey == "" {
+		e.IdentityKey = storeWebhookIdentityKey(e)
+	}
 	row := s.db.QueryRowContext(
 		ctx,
-		`INSERT INTO webhook_events (workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO webhook_events (workspace_id, identity_key, event_type, email, reason, status, attempt_count, last_error, raw_payload)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (workspace_id, identity_key) DO NOTHING
 		 RETURNING id, workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload, created_at`,
 		e.WorkspaceID,
+		e.IdentityKey,
 		e.EventType,
 		e.Email,
 		e.Reason,
@@ -636,7 +643,7 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 	var email sql.NullString
 	var reason sql.NullString
 	var lastError sql.NullString
-	if err := row.Scan(
+	err := row.Scan(
 		&out.ID,
 		&out.WorkspaceID,
 		&out.EventType,
@@ -647,7 +654,25 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 		&lastError,
 		&raw,
 		&out.CreatedAt,
-	); err != nil {
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT id, workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload, created_at
+			 FROM webhook_events WHERE workspace_id = $1 AND identity_key = $2`, e.WorkspaceID, e.IdentityKey,
+		).Scan(
+			&out.ID,
+			&out.WorkspaceID,
+			&out.EventType,
+			&email,
+			&reason,
+			&out.Status,
+			&out.AttemptCount,
+			&lastError,
+			&raw,
+			&out.CreatedAt,
+		)
+	}
+	if err != nil {
 		return domain.WebhookEvent{}, err
 	}
 	if email.Valid {
@@ -662,11 +687,24 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 	if raw.Valid {
 		out.RawPayload = raw.String
 	}
+	out.IdentityKey = e.IdentityKey
 	return out, nil
 }
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func storeWebhookIdentityKey(event domain.WebhookEvent) string {
+	material := strings.Join([]string{
+		strconv.FormatInt(event.WorkspaceID, 10),
+		strings.TrimSpace(strings.ToLower(event.EventType)),
+		normalizeEmail(event.Email),
+		strings.TrimSpace(event.Reason),
+		event.RawPayload,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(material))
+	return "v1:" + hex.EncodeToString(sum[:])
 }
 
 func splitDomains(raw string) []string {

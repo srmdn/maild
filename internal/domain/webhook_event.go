@@ -6,6 +6,7 @@ type WebhookEvent struct {
 	ID           int64     `json:"id"`
 	WorkspaceID  int64     `json:"workspace_id"`
 	EventType    string    `json:"event_type"`
+	IdentityKey  string    `json:"-"`
 	Email        string    `json:"email,omitempty"`
 	Reason       string    `json:"reason,omitempty"`
 	Status       string    `json:"status"`
@@ -27,6 +28,7 @@ type WebhookReplayResult struct {
 	Requested    int                    `json:"requested"`
 	Replayed     int                    `json:"replayed"`
 	Failed       int                    `json:"failed"`
+	Skipped      int                    `json:"skipped"`
 	ReplaySource string                 `json:"replay_source"`
 	Outcomes     []WebhookReplayOutcome `json:"outcomes"`
 }

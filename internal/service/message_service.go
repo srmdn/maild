@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,11 @@ type MessageStore interface {
 	ListWebhookDeadLetters(ctx context.Context, workspaceID int64, limit int) ([]domain.WebhookEvent, error)
 	ListWebhookDeadLettersByID(ctx context.Context, workspaceID int64, ids []int64) ([]domain.WebhookEvent, error)
 	UpdateWebhookEventReplayResult(ctx context.Context, id int64, status string, attemptCount int, lastError string) error
+}
+
+type AtomicWebhookStore interface {
+	ProcessWebhookEventAtomic(ctx context.Context, event domain.WebhookEvent) (domain.WebhookEvent, error)
+	ReplayWebhookEventAtomic(ctx context.Context, workspaceID, eventID int64) (domain.WebhookEvent, bool, error)
 }
 
 type MessageQueue interface {
@@ -824,7 +831,7 @@ func (s *MessageService) retryMessage(ctx context.Context, workspaceID int64, ms
 	})
 }
 
-func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string) (domain.WebhookEvent, error) {
+func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string, identity string) (domain.WebhookEvent, error) {
 	if workspaceID == 0 {
 		workspaceID = 1
 	}
@@ -839,6 +846,16 @@ func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID in
 		case "unsubscribe":
 			reason = "provider_unsubscribe"
 		}
+	}
+	if atomicStore, ok := s.store.(AtomicWebhookStore); ok {
+		return atomicStore.ProcessWebhookEventAtomic(ctx, domain.WebhookEvent{
+			WorkspaceID: workspaceID,
+			EventType:   eventType,
+			IdentityKey: webhookIdentityKey(workspaceID, eventType, email, reason, rawPayload, identity),
+			Email:       email,
+			Reason:      reason,
+			RawPayload:  rawPayload,
+		})
 	}
 
 	attempts, lastErr := s.applyWebhookEventWithRetry(ctx, workspaceID, eventType, email, reason)
@@ -919,6 +936,9 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 	if err != nil {
 		return domain.WebhookReplayResult{}, err
 	}
+	if atomicStore, ok := s.store.(AtomicWebhookStore); ok {
+		return s.replayWebhookDeadLettersAtomic(ctx, workspaceID, source, events, atomicStore)
+	}
 
 	out := domain.WebhookReplayResult{
 		WorkspaceID:  workspaceID,
@@ -975,6 +995,54 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 	}
 
 	return out, nil
+}
+
+func (s *MessageService) replayWebhookDeadLettersAtomic(ctx context.Context, workspaceID int64, source string, events []domain.WebhookEvent, store AtomicWebhookStore) (domain.WebhookReplayResult, error) {
+	out := domain.WebhookReplayResult{
+		WorkspaceID:  workspaceID,
+		Requested:    len(events),
+		ReplaySource: source,
+		Outcomes:     make([]domain.WebhookReplayOutcome, 0, len(events)),
+	}
+	for _, event := range events {
+		outcome := domain.WebhookReplayOutcome{EventID: event.ID, Status: "failed", AttemptCount: event.AttemptCount}
+		updated, claimed, err := store.ReplayWebhookEventAtomic(ctx, workspaceID, event.ID)
+		if err != nil {
+			return domain.WebhookReplayResult{}, err
+		}
+		if !claimed {
+			out.Skipped++
+			outcome.Status = "skipped"
+			outcome.Error = "event is no longer available for replay"
+			out.Outcomes = append(out.Outcomes, outcome)
+			continue
+		}
+		outcome.AttemptCount = updated.AttemptCount
+		if updated.Status == "replayed" {
+			out.Replayed++
+			outcome.Status = "replayed"
+		} else {
+			out.Failed++
+			outcome.Error = updated.LastError
+		}
+		out.Outcomes = append(out.Outcomes, outcome)
+	}
+	return out, nil
+}
+
+func webhookIdentityKey(workspaceID int64, eventType, email, reason, rawPayload, providerIdentity string) string {
+	material := strings.TrimSpace(providerIdentity)
+	if material == "" {
+		material = strings.Join([]string{
+			strings.TrimSpace(strings.ToLower(eventType)),
+			strings.TrimSpace(strings.ToLower(email)),
+			strings.TrimSpace(reason),
+			rawPayload,
+		}, "\x00")
+	}
+	material = fmt.Sprintf("%d\x00%s", workspaceID, material)
+	sum := sha256.Sum256([]byte(material))
+	return "v1:" + hex.EncodeToString(sum[:])
 }
 
 func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspaceID int64, eventType, email, reason string) (int, error) {

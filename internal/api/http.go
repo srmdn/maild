@@ -181,6 +181,7 @@ type webhookEventRequest struct {
 	Type        string `json:"type"`
 	Email       string `json:"email"`
 	Reason      string `json:"reason"`
+	Identity    string `json:"-"`
 }
 
 type replayWebhookDeadLettersRequest struct {
@@ -264,7 +265,7 @@ func (h *Handler) receiveWebhookEvent(w http.ResponseWriter, r *http.Request) {
 		}
 
 		reason := strings.TrimSpace(req.Reason)
-		event, err := h.messages.ProcessWebhookEvent(r.Context(), req.WorkspaceID, eventType, email, reason, rawPayload)
+		event, err := h.messages.ProcessWebhookEvent(r.Context(), req.WorkspaceID, eventType, email, reason, rawPayload, req.Identity)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)

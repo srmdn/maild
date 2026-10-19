@@ -334,6 +334,134 @@ func TestStoreWebhookEvents(t *testing.T) {
 	}
 }
 
+func TestStoreWebhookAtomicIdempotencyAndReplay(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	event := domain.WebhookEvent{
+		WorkspaceID: 1,
+		IdentityKey: "test-provider:event-42",
+		EventType:   "bounce_permanent",
+		Email:       "duplicate@example.com",
+		Reason:      "permanent bounce",
+		RawPayload:  `{"id":"event-42"}`,
+	}
+	results := make(chan domain.WebhookEvent, 2)
+	errs := make(chan error, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			result, err := store.ProcessWebhookEventAtomic(ctx, event)
+			results <- result
+			errs <- err
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == 0 || first.ID != second.ID {
+		t.Fatalf("duplicate calls returned IDs %d and %d; want the same persisted event", first.ID, second.ID)
+	}
+	var eventCount, suppressionCount int
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM webhook_events WHERE workspace_id = 1 AND identity_key = $1`, event.IdentityKey).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = $1`, event.Email).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 || suppressionCount != 1 {
+		t.Fatalf("duplicate delivery created %d events and %d suppressions; want one of each", eventCount, suppressionCount)
+	}
+
+	dead, err := store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+		WorkspaceID: 1, IdentityKey: "test-provider:replay-43", EventType: "complaint",
+		Email: "replay@example.com", Reason: "complaint", Status: "dead_letter", AttemptCount: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ReplayWebhookEventAtomic(ctx, 999, dead.ID); err != nil || claimed {
+		t.Fatalf("cross-workspace replay = claimed %v, err %v; want not claimed", claimed, err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `
+		CREATE FUNCTION fail_webhook_replay_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.status = 'replayed' THEN RAISE EXCEPTION 'injected replay completion failure'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER fail_webhook_replay_completion BEFORE UPDATE ON webhook_events
+		FOR EACH ROW EXECUTE FUNCTION fail_webhook_replay_completion();
+	`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.DB().Exec(`DROP TRIGGER IF EXISTS fail_webhook_replay_completion ON webhook_events`)
+		_, _ = store.DB().Exec(`DROP FUNCTION IF EXISTS fail_webhook_replay_completion()`)
+	})
+	if _, claimed, err := store.ReplayWebhookEventAtomic(ctx, 1, dead.ID); err == nil || claimed {
+		t.Fatalf("injected partial replay = claimed %v, err %v; want rollback error", claimed, err)
+	}
+	var status string
+	if err := store.DB().QueryRowContext(ctx, `SELECT status FROM webhook_events WHERE id = $1`, dead.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "dead_letter" {
+		t.Fatalf("status after rolled-back replay = %q, want dead_letter", status)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = 'replay@example.com'`).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if suppressionCount != 0 {
+		t.Fatalf("rolled-back replay left %d suppressions, want 0", suppressionCount)
+	}
+	if _, err := store.DB().ExecContext(ctx, `DROP TRIGGER fail_webhook_replay_completion ON webhook_events`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `DROP FUNCTION fail_webhook_replay_completion()`); err != nil {
+		t.Fatal(err)
+	}
+
+	claimedCount := 0
+	claimedResults := make(chan bool, 2)
+	replayErrors := make(chan error, 2)
+	replayStart := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-replayStart
+			_, claimed, err := store.ReplayWebhookEventAtomic(ctx, 1, dead.ID)
+			claimedResults <- claimed
+			replayErrors <- err
+		}()
+	}
+	close(replayStart)
+	for range 2 {
+		if err := <-replayErrors; err != nil {
+			t.Fatal(err)
+		}
+		if <-claimedResults {
+			claimedCount++
+		}
+	}
+	if claimedCount != 1 {
+		t.Fatalf("sequential replay claimed %d times, want once", claimedCount)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = 'replay@example.com'`).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if suppressionCount != 1 {
+		t.Fatalf("replay created %d suppressions, want one", suppressionCount)
+	}
+}
+
 func TestStoreUsersAndWorkspaces(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

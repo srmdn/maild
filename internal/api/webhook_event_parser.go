@@ -92,7 +92,14 @@ func parseWebhookEventObject(obj map[string]any) ([]webhookEventRequest, bool) {
 				}
 				recipientReason += diagnostic
 			}
-			events = append(events, webhookEventRequest{WorkspaceID: workspaceID, Type: eventType, Email: strings.ToLower(email), Reason: recipientReason})
+			normalizedEmail := strings.ToLower(email)
+			events = append(events, webhookEventRequest{
+				WorkspaceID: workspaceID,
+				Type:        eventType,
+				Email:       normalizedEmail,
+				Reason:      recipientReason,
+				Identity:    providerWebhookIdentity(obj, eventType, normalizedEmail),
+			})
 		}
 		return events, len(events) > 0
 	}
@@ -112,7 +119,32 @@ func parseWebhookEventObject(obj map[string]any) ([]webhookEventRequest, bool) {
 		Type:        eventType,
 		Email:       strings.ToLower(email),
 		Reason:      reason,
+		Identity:    providerWebhookIdentity(obj, eventType, strings.ToLower(email)),
 	}}, true
+}
+
+func providerWebhookIdentity(obj map[string]any, eventType, email string) string {
+	if id := strings.TrimSpace(stringFromAny(firstAny(obj, "sg_event_id"))); id != "" {
+		return "sendgrid:" + id + ":" + eventType + ":" + email
+	}
+	if data, ok := mapFromAny(obj["event-data"]); ok {
+		if id := strings.TrimSpace(stringFromAny(firstAny(data, "id"))); id != "" {
+			return "mailgun:" + id + ":" + eventType + ":" + email
+		}
+	}
+	if mail, ok := mapFromAny(obj["mail"]); ok {
+		if id := strings.TrimSpace(stringFromAny(firstAny(mail, "messageId"))); id != "" {
+			return "ses:" + id + ":" + eventType + ":" + email
+		}
+	}
+	if id := strings.TrimSpace(stringFromAny(firstAny(obj, "ID", "id", "event_id", "eventId"))); id != "" {
+		provider := strings.ToLower(strings.TrimSpace(stringFromAny(firstAny(obj, "RecordType"))))
+		if provider == "" {
+			provider = "provider"
+		}
+		return provider + ":" + id + ":" + eventType + ":" + email
+	}
+	return ""
 }
 
 func classifyProviderBounce(obj map[string]any, rawType, eventType string) string {
