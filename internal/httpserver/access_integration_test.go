@@ -90,7 +90,7 @@ func newAccessFixture(t *testing.T) *accessFixture {
 		})
 	}
 	cfg := config.Config{AppEnv: "development", APIKeyHeader: "X-Test-Key", AdminAPIKey: f.adminKey, OperatorAPIKey: f.operatorKey, LoginPath: "/login", AllowSignup: false, SMTPHost: "localhost", SMTPPort: 1025, SMTPFrom: "test@example.test"}
-	authHandler := auth.NewAuthHandler(store, sessions, cfg.AppEnv, false, cfg.LoginPath, nil)
+	authHandler := auth.NewAuthHandler(store, sessions, cfg.AppEnv, false, cfg.LoginPath, nil, nil)
 	sealer, err := crypto.NewSealerFromBase64("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 	if err != nil {
 		t.Fatal(err)

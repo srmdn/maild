@@ -87,7 +87,7 @@ func Run() error {
 	sessionStore := auth.NewSessionStore(cfg.RedisAddr, cfg.RedisDB)
 	defer sessionStore.Close()
 	loginLimiter := auth.NewLoginRateLimiter(msgQueue.Client(), cfg.LoginMaxFailures, cfg.LoginFailureWindow, cfg.LoginLockout)
-	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv, cfg.AllowSignup, cfg.LoginPath, loginLimiter)
+	authHandler := auth.NewAuthHandler(store, sessionStore, cfg.AppEnv, cfg.AllowSignup, cfg.LoginPath, loginLimiter, logger)
 
 	apiHandler := api.NewHandler(
 		messageService,

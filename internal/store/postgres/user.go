@@ -20,6 +20,45 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (dom
 	return u, err
 }
 
+// CreateUserWithWorkspace creates a signup identity and its initial workspace
+// atomically so a failed workspace or membership insert cannot orphan a user.
+func (s *Store) CreateUserWithWorkspace(ctx context.Context, email, passwordHash, workspaceName string) (domain.UserWithWorkspace, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.UserWithWorkspace{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var result domain.UserWithWorkspace
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at`,
+		email, passwordHash,
+	).Scan(&result.ID, &result.Email, &result.PasswordHash, &result.CreatedAt); err != nil {
+		return domain.UserWithWorkspace{}, err
+	}
+	result.WorkspaceName = workspaceName
+	result.Role = "admin"
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO workspaces (name) VALUES ($1) RETURNING id`,
+		workspaceName,
+	).Scan(&result.WorkspaceID); err != nil {
+		return domain.UserWithWorkspace{}, err
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO user_workspaces (user_id, workspace_id, role) VALUES ($1, $2, 'admin')`,
+		result.ID, result.WorkspaceID,
+	); err != nil {
+		return domain.UserWithWorkspace{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.UserWithWorkspace{}, err
+	}
+	return result, nil
+}
+
 func (s *Store) UpdateUserPasswordHash(ctx context.Context, userID int64, hash string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
 	return err

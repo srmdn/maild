@@ -46,8 +46,32 @@ func (s *Store) Check(ctx context.Context) bool {
 }
 
 func (s *Store) EnsureDefaultWorkspace(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO workspaces (id, name) VALUES (1, 'default') ON CONFLICT (id) DO NOTHING`)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Serialize workspace inserts while the explicit default ID is established
+	// and the BIGSERIAL sequence is advanced past every existing workspace.
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE workspaces IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces (id, name) VALUES (1, 'default') ON CONFLICT (id) DO NOTHING`); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `SELECT setval(
+		pg_get_serial_sequence('workspaces', 'id')::regclass,
+		GREATEST(
+			COALESCE(pg_sequence_last_value(pg_get_serial_sequence('workspaces', 'id')::regclass), 0),
+			(SELECT COALESCE(MAX(id), 1) FROM workspaces)
+		),
+		true
+	)`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) IsSuppressed(ctx context.Context, workspaceID int64, email string) (bool, error) {

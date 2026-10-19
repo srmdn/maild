@@ -396,6 +396,64 @@ func TestStoreUsersAndWorkspaces(t *testing.T) {
 	}
 }
 
+func TestSignupAfterDefaultWorkspaceBootstrap(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateUserWithWorkspace(ctx, "first@x.com", "hash", "first workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.WorkspaceID != 2 {
+		t.Fatalf("first signup workspace ID = %d, want 2 after default workspace ID 1", first.WorkspaceID)
+	}
+	if first.Role != "admin" || first.ID == 0 || first.PasswordHash != "hash" {
+		t.Fatalf("unexpected signup result: %+v", first)
+	}
+
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateUserWithWorkspace(ctx, "second@x.com", "hash", "second workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.WorkspaceID != 3 {
+		t.Fatalf("second signup workspace ID = %d, want 3 after repeated bootstrap", second.WorkspaceID)
+	}
+
+	workspace, err := store.GetUserWorkspace(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.WorkspaceID != first.WorkspaceID || workspace.Role != "admin" {
+		t.Fatalf("signup membership mismatch: %+v", workspace)
+	}
+}
+
+func TestCreateUserWithWorkspaceRollsBackOnWorkspaceFailure(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE workspaces ADD CONSTRAINT test_reject_signup_workspace CHECK (name <> 'force-signup-rollback')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.DB().ExecContext(context.Background(), `ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS test_reject_signup_workspace`)
+	})
+
+	if _, err := store.CreateUserWithWorkspace(ctx, "rollback@x.com", "hash", "force-signup-rollback"); err == nil {
+		t.Fatal("expected workspace insert to fail")
+	}
+	if exists, err := store.EmailExists(ctx, "rollback@x.com"); err != nil {
+		t.Fatal(err)
+	} else if exists {
+		t.Fatal("user remained after signup transaction failed")
+	}
+}
+
 func TestStoreUserAPIKeys(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
