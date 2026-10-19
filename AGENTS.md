@@ -85,6 +85,7 @@ PostgreSQL + Redis; server-rendered `html/template` UI in `internal/web`
   irreversible action. Resolve routine implementation choices within the
   authorized scope without repeatedly asking for approval.
 
-Use available shared skills when their triggers apply, including Git change
-management, secret remediation, continuity, and repository hygiene. Keep reusable
-workflow instructions there and repository-specific requirements here.
+These instructions are self-contained for this repository. Contributors do not
+need access to personal Codex skills or files outside the checkout. Keep project
+setup, security invariants, validation commands, and review expectations here;
+personal agent tooling may supplement them but is never a prerequisite.
