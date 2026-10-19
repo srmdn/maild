@@ -85,7 +85,8 @@ curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
     "name": "mailpit",
     "host": "localhost",
     "port": 1025,
-    "from_email": "noreply@maild.local"
+    "from_email": "noreply@maild.local",
+    "tls_mode": "none"
   }'
 ```
 
@@ -120,7 +121,7 @@ Create personal keys in the dashboard for application integrations. Keys follow 
 - [Go integration example](docs/integrations/go.md)
 - [Node.js integration example](docs/integrations/node.md)
 
-Before sending real mail, register an SMTP account with `POST /v1/smtp-accounts`. The account credentials are encrypted at rest. `SMTP_*` environment variables are still required at startup and act as the fallback SMTP account if a workspace has no registered account; see [production configuration](deploy/production-config.md).
+Before sending real mail, register an SMTP account with `POST /v1/smtp-accounts`. The account credentials are encrypted at rest. Set `tls_mode` to `starttls` (the default and recommended mode), `implicit_tls` (TLS from connection start, commonly port 465), or `none` (unencrypted transport, only for trusted local relays; SMTP authentication is rejected in this mode). Sending is bounded to 30 seconds and account validation to 5 seconds. `SMTP_*` environment variables are still required at startup and act as the fallback SMTP account if a workspace has no registered account; `SMTP_TLS_MODE` controls that fallback and defaults to `starttls`. See [production configuration](deploy/production-config.md).
 
 ### Common API Outcomes
 
@@ -131,6 +132,12 @@ Before sending real mail, register an SMTP account with `POST /v1/smtp-accounts`
 | `401 Unauthorized` / `403 Forbidden` | The API key is missing, invalid, or lacks the required role. |
 | `429 Too Many Requests` | A workspace or recipient-domain rate limit was reached. |
 | `500 Internal Server Error` | maild could not queue or process the request. Check logs and the message timeline. |
+
+Delivery is asynchronous and at-least-once when an SMTP send returns an error:
+the relay may have accepted a message before its response was lost, so a retry
+can produce a duplicate. If a worker claim expires while its result is unclear,
+maild marks the message `unknown` and does not retry it automatically. Check the
+relay's logs before taking manual action.
 
 ## Operate It
 

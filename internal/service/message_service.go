@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +48,11 @@ type MessageStore interface {
 	UpdateWebhookEventReplayResult(ctx context.Context, id int64, status string, attemptCount int, lastError string) error
 }
 
+type AtomicWebhookStore interface {
+	ProcessWebhookEventAtomic(ctx context.Context, event domain.WebhookEvent) (domain.WebhookEvent, error)
+	ReplayWebhookEventAtomic(ctx context.Context, workspaceID, eventID int64) (domain.WebhookEvent, bool, error)
+}
+
 type MessageQueue interface {
 	Enqueue(ctx context.Context, id int64) error
 	Dequeue(ctx context.Context, timeout time.Duration) (int64, bool, error)
@@ -56,6 +63,20 @@ type MessageQueue interface {
 // by an in-process backoff sleep.
 type RetryScheduler interface {
 	ScheduleRetry(ctx context.Context, id int64, at time.Time) error
+}
+
+type MessageRetryAtStore interface {
+	SetMessageRetryAt(ctx context.Context, id int64, at time.Time) (bool, error)
+}
+
+type MessageRecoveryStore interface {
+	ClaimQueuedMessagesForRecovery(ctx context.Context, olderThan time.Time, limit int) ([]int64, error)
+	MarkStaleSendingUnknown(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
+type MessageRecoveryResult struct {
+	Requeued      int
+	MarkedUnknown int64
 }
 
 type RateLimiter interface {
@@ -115,6 +136,46 @@ func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclien
 
 func (s *MessageService) Bootstrap(ctx context.Context) error {
 	return s.store.EnsureDefaultWorkspace(ctx)
+}
+
+// RecoverQueue republishes durable queued messages and marks expired sending
+// claims unknown instead of automatically resending an ambiguous SMTP outcome.
+func (s *MessageService) RecoverQueue(ctx context.Context, queuedGrace, sendingLease time.Duration, limit int) (MessageRecoveryResult, error) {
+	store, ok := s.store.(MessageRecoveryStore)
+	if !ok {
+		return MessageRecoveryResult{}, nil
+	}
+	if queuedGrace <= 0 {
+		queuedGrace = 30 * time.Second
+	}
+	if sendingLease <= 0 {
+		sendingLease = 15 * time.Minute
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
+	result := MessageRecoveryResult{}
+	unknown, err := store.MarkStaleSendingUnknown(ctx, time.Now().Add(-sendingLease))
+	if err != nil {
+		return result, err
+	}
+	result.MarkedUnknown = unknown
+
+	ids, err := store.ClaimQueuedMessagesForRecovery(ctx, time.Now().Add(-queuedGrace), limit)
+	if err != nil {
+		return result, err
+	}
+	if len(ids) > 0 && s.queue == nil {
+		return result, errors.New("message queue unavailable")
+	}
+	for _, id := range ids {
+		if err := s.queue.Enqueue(ctx, id); err != nil {
+			return result, err
+		}
+		result.Requeued++
+	}
+	return result, nil
 }
 
 func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fromEmail, toEmail, subject, body string) (domain.Message, error) {
@@ -249,19 +310,26 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 
 	attemptNo, err := s.store.NextAttemptNo(ctx, m.ID)
 	if err != nil {
+		if retryErr := s.scheduleRetryState(ctx, m.ID, time.Now().Add(time.Minute)); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
 		return err
 	}
 
 	creds, err := s.resolveCredentials(ctx, m.WorkspaceID)
 	if err != nil {
+		if retryErr := s.scheduleRetryState(ctx, m.ID, time.Now().Add(time.Minute)); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
 		return err
 	}
 	provider := smtpclient.ProviderName(creds)
 
-	err = s.sender.Send(creds, m.ToEmail, m.Subject, m.BodyText)
+	err = s.sender.Send(ctx, creds, m.ToEmail, m.Subject, m.BodyText)
 	if err == nil {
 		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, "accepted by smtp server", true); err != nil {
-			return err
+			markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+			return errors.Join(err, markErr)
 		}
 		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
 			WorkspaceID: m.WorkspaceID,
@@ -270,12 +338,17 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			Quantity:    1,
 			Metadata:    `{"provider":"` + provider + `"}`,
 		})
-		return s.store.SetMessageStatus(ctx, m.ID, "sent")
+		if err := s.store.SetMessageStatus(ctx, m.ID, "sent"); err != nil {
+			markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+			return errors.Join(err, markErr)
+		}
+		return nil
 	}
 
 	safeErr := sanitize.SMTPError(err.Error())
 	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, safeErr, false); insertErr != nil {
-		return insertErr
+		markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+		return errors.Join(insertErr, markErr)
 	}
 	_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
 		WorkspaceID: m.WorkspaceID,
@@ -302,18 +375,45 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			Quantity:    1,
 			Metadata:    `{"provider":"` + provider + `"}`,
 		})
-		return s.store.SetMessageStatus(ctx, m.ID, "failed")
+		ok, err := s.store.TransitionMessageStatus(ctx, m.ID, "sending", "failed")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrMessageClaimLost
+		}
+		return nil
 	}
 
-	if err := s.store.SetMessageStatus(ctx, m.ID, "queued"); err != nil {
+	// SMTP errors are retried with at-least-once semantics: a relay may have
+	// accepted DATA before a connection error reached us, so duplicates remain
+	// possible. Expired worker claims are handled separately as unknown.
+	return s.scheduleRetryState(ctx, m.ID, time.Now().Add(backoffDuration(attemptNo)))
+}
+
+func (s *MessageService) scheduleRetryState(ctx context.Context, messageID int64, at time.Time) error {
+	if store, ok := s.store.(MessageRetryAtStore); ok {
+		updated, err := store.SetMessageRetryAt(ctx, messageID, at)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return ErrMessageClaimLost
+		}
+	} else if err := s.store.SetMessageStatus(ctx, messageID, "queued"); err != nil {
 		return err
 	}
-
-	if sched, ok := s.queue.(RetryScheduler); ok {
-		return sched.ScheduleRetry(ctx, m.ID, time.Now().Add(backoffDuration(attemptNo)))
+	if scheduler, ok := s.queue.(RetryScheduler); ok {
+		return scheduler.ScheduleRetry(ctx, messageID, at)
 	}
-	time.Sleep(backoffDuration(attemptNo))
-	return s.queue.Enqueue(ctx, m.ID)
+	if s.queue == nil {
+		return errors.New("message queue unavailable")
+	}
+	delay := time.Until(at)
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return s.queue.Enqueue(ctx, messageID)
 }
 
 func (s *MessageService) PopQueue(ctx context.Context, timeout time.Duration) (int64, bool, error) {
@@ -329,6 +429,14 @@ func (s *MessageService) AddUnsubscribe(ctx context.Context, workspaceID int64, 
 }
 
 func (s *MessageService) UpsertSMTPAccount(ctx context.Context, account domain.SMTPAccount) error {
+	mode, err := smtpclient.NormalizeTLSMode(account.TLSMode)
+	if err != nil {
+		return err
+	}
+	if mode == smtpclient.TLSModeNone && (account.Username != "" || account.Password != "") {
+		return errors.New("SMTP authentication requires TLS")
+	}
+	account.TLSMode = mode
 	payload, err := json.Marshal(account)
 	if err != nil {
 		return err
@@ -399,6 +507,7 @@ func (s *MessageService) resolveCredentials(ctx context.Context, workspaceID int
 		Username: account.Username,
 		Password: account.Password,
 		From:     account.FromEmail,
+		TLSMode:  account.TLSMode,
 	}, nil
 }
 
@@ -407,7 +516,7 @@ func (s *MessageService) ValidateSMTPAccount(ctx context.Context, workspaceID in
 	if err != nil {
 		return "", err
 	}
-	if err := s.sender.Validate(creds, 5*time.Second); err != nil {
+	if err := s.sender.Validate(ctx, creds, 5*time.Second); err != nil {
 		return "", err
 	}
 	return smtpclient.ProviderName(creds), nil
@@ -722,20 +831,31 @@ func (s *MessageService) retryMessage(ctx context.Context, workspaceID int64, ms
 	})
 }
 
-func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string) (domain.WebhookEvent, error) {
+func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID int64, eventType, email, reason, rawPayload string, identity string) (domain.WebhookEvent, error) {
 	if workspaceID == 0 {
 		workspaceID = 1
 	}
 	eventType = strings.ToLower(strings.TrimSpace(eventType))
 	email = strings.TrimSpace(email)
 	reason = strings.TrimSpace(reason)
+	eventType = classifyStoredWebhookBounce(eventType, reason)
 	if reason == "" {
 		switch eventType {
-		case "bounce", "complaint":
+		case "bounce_permanent", "bounce_temporary", "bounce_unclassified", "complaint":
 			reason = "provider_" + eventType
 		case "unsubscribe":
 			reason = "provider_unsubscribe"
 		}
+	}
+	if atomicStore, ok := s.store.(AtomicWebhookStore); ok {
+		return atomicStore.ProcessWebhookEventAtomic(ctx, domain.WebhookEvent{
+			WorkspaceID: workspaceID,
+			EventType:   eventType,
+			IdentityKey: webhookIdentityKey(workspaceID, eventType, email, reason, rawPayload, identity),
+			Email:       email,
+			Reason:      reason,
+			RawPayload:  rawPayload,
+		})
 	}
 
 	attempts, lastErr := s.applyWebhookEventWithRetry(ctx, workspaceID, eventType, email, reason)
@@ -816,6 +936,9 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 	if err != nil {
 		return domain.WebhookReplayResult{}, err
 	}
+	if atomicStore, ok := s.store.(AtomicWebhookStore); ok {
+		return s.replayWebhookDeadLettersAtomic(ctx, workspaceID, source, events, atomicStore)
+	}
 
 	out := domain.WebhookReplayResult{
 		WorkspaceID:  workspaceID,
@@ -831,7 +954,7 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 			AttemptCount: event.AttemptCount,
 		}
 
-		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+		eventType := classifyStoredWebhookBounce(strings.ToLower(strings.TrimSpace(event.EventType)), event.Reason)
 		email := strings.TrimSpace(strings.ToLower(event.Email))
 		reason := strings.TrimSpace(event.Reason)
 		if email == "" {
@@ -874,12 +997,68 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 	return out, nil
 }
 
+func (s *MessageService) replayWebhookDeadLettersAtomic(ctx context.Context, workspaceID int64, source string, events []domain.WebhookEvent, store AtomicWebhookStore) (domain.WebhookReplayResult, error) {
+	out := domain.WebhookReplayResult{
+		WorkspaceID:  workspaceID,
+		Requested:    len(events),
+		ReplaySource: source,
+		Outcomes:     make([]domain.WebhookReplayOutcome, 0, len(events)),
+	}
+	for _, event := range events {
+		outcome := domain.WebhookReplayOutcome{EventID: event.ID, Status: "failed", AttemptCount: event.AttemptCount}
+		updated, claimed, err := store.ReplayWebhookEventAtomic(ctx, workspaceID, event.ID)
+		if err != nil {
+			return domain.WebhookReplayResult{}, err
+		}
+		if !claimed {
+			out.Skipped++
+			outcome.Status = "skipped"
+			outcome.Error = "event is no longer available for replay"
+			out.Outcomes = append(out.Outcomes, outcome)
+			continue
+		}
+		outcome.AttemptCount = updated.AttemptCount
+		if updated.Status == "replayed" {
+			out.Replayed++
+			outcome.Status = "replayed"
+		} else {
+			out.Failed++
+			outcome.Error = updated.LastError
+		}
+		out.Outcomes = append(out.Outcomes, outcome)
+	}
+	return out, nil
+}
+
+func webhookIdentityKey(workspaceID int64, eventType, email, reason, rawPayload, providerIdentity string) string {
+	material := strings.TrimSpace(providerIdentity)
+	if material == "" {
+		material = strings.Join([]string{
+			strings.TrimSpace(strings.ToLower(eventType)),
+			strings.TrimSpace(strings.ToLower(email)),
+			strings.TrimSpace(reason),
+			rawPayload,
+		}, "\x00")
+	}
+	material = fmt.Sprintf("%d\x00%s", workspaceID, material)
+	sum := sha256.Sum256([]byte(material))
+	return "v1:" + hex.EncodeToString(sum[:])
+}
+
 func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspaceID int64, eventType, email, reason string) (int, error) {
+	if eventType == "bounce_temporary" {
+		// Temporary provider failures are recorded for audit, but do not create
+		// permanent recipient suppressions.
+		return 1, nil
+	}
+	if eventType == "bounce_unclassified" || eventType == "bounce" {
+		return 1, fmt.Errorf("unclassified bounce; recipient was not suppressed")
+	}
 	var lastErr error
 	for attempt := 1; attempt <= s.webhookApplyMaxAttempts; attempt++ {
 		var err error
 		switch eventType {
-		case "bounce", "complaint":
+		case "bounce_permanent", "complaint":
 			err = s.store.AddSuppression(ctx, workspaceID, email, reason)
 		case "unsubscribe":
 			err = s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
@@ -900,9 +1079,24 @@ func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspa
 	return s.webhookApplyMaxAttempts, lastErr
 }
 
+func classifyStoredWebhookBounce(eventType, reason string) string {
+	if eventType != "bounce" {
+		return eventType
+	}
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "hard_bounce", "permanent", "permanent/general", "permanent/suppressed":
+		return "bounce_permanent"
+	case "soft_bounce", "transient", "temporary", "temporary/general", "transient/general":
+		return "bounce_temporary"
+	default:
+		return "bounce_unclassified"
+	}
+}
+
 var ErrBadRequest = errors.New("bad request")
 var ErrRateLimited = errors.New("rate limited")
 var ErrBlockedRecipientDomain = errors.New("blocked recipient domain")
+var ErrMessageClaimLost = errors.New("message processing claim was lost")
 
 func extractDomain(email string) string {
 	at := strings.LastIndex(email, "@")

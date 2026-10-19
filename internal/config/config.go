@@ -66,6 +66,7 @@ type Config struct {
 	SMTPUsername string
 	SMTPPassword string
 	SMTPFrom     string
+	SMTPTLSMode  string
 }
 
 func Load() Config {
@@ -110,6 +111,7 @@ func Load() Config {
 		SMTPUsername:              getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                  getEnv("SMTP_FROM", envFallbackString(isProduction, defaultSMTPFrom)),
+		SMTPTLSMode:               getEnv("SMTP_TLS_MODE", "starttls"),
 	}
 }
 
@@ -153,6 +155,12 @@ func (c Config) Validate() error {
 	}
 	if c.SMTPPort < 1 {
 		return ErrInvalidConfig("SMTP_PORT must be >= 1")
+	}
+	if c.SMTPTLSMode != "starttls" && c.SMTPTLSMode != "implicit_tls" && c.SMTPTLSMode != "none" {
+		return ErrInvalidConfig("SMTP_TLS_MODE must be starttls, implicit_tls, or none")
+	}
+	if c.SMTPTLSMode == "none" && (c.SMTPUsername != "" || c.SMTPPassword != "") {
+		return ErrInvalidConfig("SMTP authentication requires SMTP_TLS_MODE=starttls or implicit_tls")
 	}
 	if strings.TrimSpace(c.SMTPFrom) == "" {
 		return ErrInvalidConfig("SMTP_FROM must not be empty")

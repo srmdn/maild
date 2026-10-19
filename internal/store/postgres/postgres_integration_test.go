@@ -334,6 +334,134 @@ func TestStoreWebhookEvents(t *testing.T) {
 	}
 }
 
+func TestStoreWebhookAtomicIdempotencyAndReplay(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	event := domain.WebhookEvent{
+		WorkspaceID: 1,
+		IdentityKey: "test-provider:event-42",
+		EventType:   "bounce_permanent",
+		Email:       "duplicate@example.com",
+		Reason:      "permanent bounce",
+		RawPayload:  `{"id":"event-42"}`,
+	}
+	results := make(chan domain.WebhookEvent, 2)
+	errs := make(chan error, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			result, err := store.ProcessWebhookEventAtomic(ctx, event)
+			results <- result
+			errs <- err
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == 0 || first.ID != second.ID {
+		t.Fatalf("duplicate calls returned IDs %d and %d; want the same persisted event", first.ID, second.ID)
+	}
+	var eventCount, suppressionCount int
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM webhook_events WHERE workspace_id = 1 AND identity_key = $1`, event.IdentityKey).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = $1`, event.Email).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 || suppressionCount != 1 {
+		t.Fatalf("duplicate delivery created %d events and %d suppressions; want one of each", eventCount, suppressionCount)
+	}
+
+	dead, err := store.InsertWebhookEvent(ctx, domain.WebhookEvent{
+		WorkspaceID: 1, IdentityKey: "test-provider:replay-43", EventType: "complaint",
+		Email: "replay@example.com", Reason: "complaint", Status: "dead_letter", AttemptCount: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ReplayWebhookEventAtomic(ctx, 999, dead.ID); err != nil || claimed {
+		t.Fatalf("cross-workspace replay = claimed %v, err %v; want not claimed", claimed, err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `
+		CREATE FUNCTION fail_webhook_replay_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.status = 'replayed' THEN RAISE EXCEPTION 'injected replay completion failure'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER fail_webhook_replay_completion BEFORE UPDATE ON webhook_events
+		FOR EACH ROW EXECUTE FUNCTION fail_webhook_replay_completion();
+	`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.DB().Exec(`DROP TRIGGER IF EXISTS fail_webhook_replay_completion ON webhook_events`)
+		_, _ = store.DB().Exec(`DROP FUNCTION IF EXISTS fail_webhook_replay_completion()`)
+	})
+	if _, claimed, err := store.ReplayWebhookEventAtomic(ctx, 1, dead.ID); err == nil || claimed {
+		t.Fatalf("injected partial replay = claimed %v, err %v; want rollback error", claimed, err)
+	}
+	var status string
+	if err := store.DB().QueryRowContext(ctx, `SELECT status FROM webhook_events WHERE id = $1`, dead.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "dead_letter" {
+		t.Fatalf("status after rolled-back replay = %q, want dead_letter", status)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = 'replay@example.com'`).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if suppressionCount != 0 {
+		t.Fatalf("rolled-back replay left %d suppressions, want 0", suppressionCount)
+	}
+	if _, err := store.DB().ExecContext(ctx, `DROP TRIGGER fail_webhook_replay_completion ON webhook_events`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `DROP FUNCTION fail_webhook_replay_completion()`); err != nil {
+		t.Fatal(err)
+	}
+
+	claimedCount := 0
+	claimedResults := make(chan bool, 2)
+	replayErrors := make(chan error, 2)
+	replayStart := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-replayStart
+			_, claimed, err := store.ReplayWebhookEventAtomic(ctx, 1, dead.ID)
+			claimedResults <- claimed
+			replayErrors <- err
+		}()
+	}
+	close(replayStart)
+	for range 2 {
+		if err := <-replayErrors; err != nil {
+			t.Fatal(err)
+		}
+		if <-claimedResults {
+			claimedCount++
+		}
+	}
+	if claimedCount != 1 {
+		t.Fatalf("sequential replay claimed %d times, want once", claimedCount)
+	}
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM suppressions WHERE workspace_id = 1 AND email = 'replay@example.com'`).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if suppressionCount != 1 {
+		t.Fatalf("replay created %d suppressions, want one", suppressionCount)
+	}
+}
+
 func TestStoreUsersAndWorkspaces(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -393,6 +521,123 @@ func TestStoreUsersAndWorkspaces(t *testing.T) {
 	}
 	if smtp || dom || pol || msg {
 		t.Fatalf("expected all checklist items false: %v %v %v %v", smtp, dom, pol, msg)
+	}
+}
+
+func TestSignupAfterDefaultWorkspaceBootstrap(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateUserWithWorkspace(ctx, "first@x.com", "hash", "first workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.WorkspaceID != 2 {
+		t.Fatalf("first signup workspace ID = %d, want 2 after default workspace ID 1", first.WorkspaceID)
+	}
+	if first.Role != "admin" || first.ID == 0 || first.PasswordHash != "hash" {
+		t.Fatalf("unexpected signup result: %+v", first)
+	}
+
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateUserWithWorkspace(ctx, "second@x.com", "hash", "second workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.WorkspaceID != 3 {
+		t.Fatalf("second signup workspace ID = %d, want 3 after repeated bootstrap", second.WorkspaceID)
+	}
+
+	workspace, err := store.GetUserWorkspace(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.WorkspaceID != first.WorkspaceID || workspace.Role != "admin" {
+		t.Fatalf("signup membership mismatch: %+v", workspace)
+	}
+}
+
+func TestCreateUserWithWorkspaceRollsBackOnWorkspaceFailure(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE workspaces ADD CONSTRAINT test_reject_signup_workspace CHECK (name <> 'force-signup-rollback')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.DB().ExecContext(context.Background(), `ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS test_reject_signup_workspace`)
+	})
+
+	if _, err := store.CreateUserWithWorkspace(ctx, "rollback@x.com", "hash", "force-signup-rollback"); err == nil {
+		t.Fatal("expected workspace insert to fail")
+	}
+	if exists, err := store.EmailExists(ctx, "rollback@x.com"); err != nil {
+		t.Fatal(err)
+	} else if exists {
+		t.Fatal("user remained after signup transaction failed")
+	}
+}
+
+func TestMessageQueueRecoveryRespectsRetryScheduleAndExpiresClaims(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "a@x.com", Subject: "stale", Status: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureAt := time.Now().Add(time.Hour)
+	future, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "b@x.com", Subject: "future", Status: "queued", ScheduledAt: &futureAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sending, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "c@x.com", Subject: "sending", Status: "sending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, id := range []int64{stale.ID, future.ID, sending.ID} {
+		if _, err := store.DB().ExecContext(ctx, `UPDATE messages SET updated_at = $2 WHERE id = $1`, id, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids, err := store.ClaimQueuedMessagesForRecovery(ctx, time.Now().Add(-time.Minute), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != stale.ID {
+		t.Fatalf("recovered queued IDs = %v, want [%d]", ids, stale.ID)
+	}
+	if count, err := store.MarkStaleSendingUnknown(ctx, time.Now().Add(-15*time.Minute)); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("marked unknown = %d, want 1", count)
+	}
+	got, err := store.GetMessage(ctx, sending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "unknown" {
+		t.Fatalf("stale sending status = %q, want unknown", got.Status)
+	}
+	if updated, err := store.SetMessageRetryAt(ctx, sending.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	} else if updated {
+		t.Fatal("expired claim was requeued after being marked unknown")
+	}
+	got, err = store.GetMessage(ctx, future.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ScheduledAt == nil || !got.ScheduledAt.After(time.Now()) {
+		t.Fatalf("future scheduled_at was not preserved: %v", got.ScheduledAt)
 	}
 }
 

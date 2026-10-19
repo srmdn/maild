@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -34,11 +35,12 @@ type AuthHandler struct {
 	allowSignup    bool
 	loginPath      string
 	loginLimiter   *LoginRateLimiter
+	logger         *slog.Logger
 	signupTemplate *template.Template
 	loginTemplate  *template.Template
 }
 
-func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv string, allowSignup bool, loginPath string, loginLimiter *LoginRateLimiter) *AuthHandler {
+func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv string, allowSignup bool, loginPath string, loginLimiter *LoginRateLimiter, logger *slog.Logger) *AuthHandler {
 	secure := appEnv == "production"
 	return &AuthHandler{
 		store:        store,
@@ -49,6 +51,7 @@ func NewAuthHandler(store *postgres.Store, sessionStore *SessionStore, appEnv st
 		allowSignup:  allowSignup,
 		loginPath:    loginPath,
 		loginLimiter: loginLimiter,
+		logger:       logger,
 	}
 }
 
@@ -121,16 +124,13 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.store.CreateUser(r.Context(), email, hash)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create user")
-		return
-	}
-
 	workspaceName := strings.Split(email, "@")[0] + "'s workspace"
-	workspaceID, err := h.store.CreateWorkspaceForUser(r.Context(), user.ID, workspaceName)
+	user, err := h.store.CreateUserWithWorkspace(r.Context(), email, hash, workspaceName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create workspace")
+		if h.logger != nil {
+			h.logger.Error("signup account creation failed", "error", err)
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create account")
 		return
 	}
 
@@ -143,12 +143,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	h.setSessionCookie(w, sessionID, int(standardSessionTTL/time.Second))
 
 	resp := authResponse{
-		User: domain.UserWithWorkspace{
-			User:          user,
-			WorkspaceID:   workspaceID,
-			WorkspaceName: workspaceName,
-			Role:          "admin",
-		},
+		User:      user,
 		SessionID: sessionID,
 	}
 

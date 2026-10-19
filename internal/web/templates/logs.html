@@ -51,7 +51,7 @@
       </div>
     </section>
 
-    <section class="md-grid md-grid-5">
+    <section class="md-grid md-grid-3">
       <article class="md-panel md-stat-card">
         <span class="md-kicker">Queued</span>
         <strong id="queueQueued" class="md-stat-value">0</strong>
@@ -76,6 +76,11 @@
         <span class="md-kicker">Suppressed</span>
         <strong id="queueSuppressed" class="md-stat-value">0</strong>
         <p class="md-muted">blocked by safety controls</p>
+      </article>
+      <article class="md-panel md-stat-card">
+        <span class="md-kicker">Unknown outcome</span>
+        <strong id="queueUnknown" class="md-stat-value">0</strong>
+        <p class="md-muted">review relay logs before retrying</p>
       </article>
     </section>
 
@@ -252,6 +257,7 @@
   const queueSentEl = document.getElementById('queueSent');
   const queueFailedEl = document.getElementById('queueFailed');
   const queueSuppressedEl = document.getElementById('queueSuppressed');
+  const queueUnknownEl = document.getElementById('queueUnknown');
   const domainResultEl = document.getElementById('domainResult');
   const webhookResultEl = document.getElementById('webhookResult');
   const onboardingResultEl = document.getElementById('onboardingResult');
@@ -283,19 +289,21 @@
   }
 
   function summarizeQueue(messages) {
-    let queued = 0, sending = 0, sent = 0, failed = 0, suppressed = 0;
+    let queued = 0, sending = 0, sent = 0, failed = 0, suppressed = 0, unknown = 0;
     for (const m of messages || []) {
       if (m.status === 'queued') queued++;
       else if (m.status === 'sending') sending++;
       else if (m.status === 'sent') sent++;
       else if (m.status === 'failed') failed++;
       else if (m.status === 'suppressed') suppressed++;
+      else if (m.status === 'unknown') unknown++;
     }
     queueQueuedEl.textContent = String(queued);
     queueSendingEl.textContent = String(sending);
     queueSentEl.textContent = String(sent);
     queueFailedEl.textContent = String(failed);
     queueSuppressedEl.textContent = String(suppressed);
+    queueUnknownEl.textContent = String(unknown);
     queueSummaryEl.textContent = 'Snapshot: ' + (messages || []).length + ' messages in range.';
   }
 
@@ -305,6 +313,7 @@
       sending: 'md-badge--neutral',
       sent: 'md-badge--ok',
       failed: 'md-badge--danger',
+      unknown: 'md-badge--warn',
       suppressed: 'md-badge--warn'
     };
     const cls = map[kind] || 'md-badge--neutral';

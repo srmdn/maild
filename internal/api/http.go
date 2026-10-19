@@ -15,6 +15,7 @@ import (
 	"github.com/srmdn/maild/internal/domaincheck"
 	"github.com/srmdn/maild/internal/sanitize"
 	"github.com/srmdn/maild/internal/service"
+	"github.com/srmdn/maild/internal/smtpclient"
 	"github.com/srmdn/maild/internal/webhooksig"
 )
 
@@ -180,6 +181,7 @@ type webhookEventRequest struct {
 	Type        string `json:"type"`
 	Email       string `json:"email"`
 	Reason      string `json:"reason"`
+	Identity    string `json:"-"`
 }
 
 type replayWebhookDeadLettersRequest struct {
@@ -263,7 +265,7 @@ func (h *Handler) receiveWebhookEvent(w http.ResponseWriter, r *http.Request) {
 		}
 
 		reason := strings.TrimSpace(req.Reason)
-		event, err := h.messages.ProcessWebhookEvent(r.Context(), req.WorkspaceID, eventType, email, reason, rawPayload)
+		event, err := h.messages.ProcessWebhookEvent(r.Context(), req.WorkspaceID, eventType, email, reason, rawPayload, req.Identity)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
 			h.logger.Warn("webhook_event_apply_failed", "type", eventType, "workspace_id", req.WorkspaceID, "email", email)
@@ -490,6 +492,7 @@ type upsertSMTPAccountRequest struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	FromEmail   string `json:"from_email"`
+	TLSMode     string `json:"tls_mode"`
 }
 
 func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
@@ -515,8 +518,18 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host, port, and from_email are required", http.StatusBadRequest)
 		return
 	}
+	tlsMode, err := smtpclient.NormalizeTLSMode(req.TLSMode)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.TLSMode = tlsMode
+	if tlsMode == smtpclient.TLSModeNone && (req.Username != "" || req.Password != "") {
+		http.Error(w, "SMTP authentication requires TLS", http.StatusBadRequest)
+		return
+	}
 
-	err := h.messages.UpsertSMTPAccount(r.Context(), domain.SMTPAccount{
+	err = h.messages.UpsertSMTPAccount(r.Context(), domain.SMTPAccount{
 		WorkspaceID: req.WorkspaceID,
 		Name:        req.Name,
 		Host:        req.Host,
@@ -524,6 +537,7 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		Username:    req.Username,
 		Password:    req.Password,
 		FromEmail:   req.FromEmail,
+		TLSMode:     req.TLSMode,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitize.HTTPInternalError(err))
@@ -539,6 +553,7 @@ func (h *Handler) upsertSMTPAccount(w http.ResponseWriter, r *http.Request) {
 		"host":         req.Host,
 		"port":         req.Port,
 		"from_email":   req.FromEmail,
+		"tls_mode":     req.TLSMode,
 		"status":       "saved_encrypted",
 	})
 	h.logger.Info("smtp_account_upserted", "workspace_id", req.WorkspaceID, "name", req.Name, "host", req.Host, "port", req.Port)

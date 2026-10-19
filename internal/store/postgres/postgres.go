@@ -2,8 +2,11 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -46,8 +49,32 @@ func (s *Store) Check(ctx context.Context) bool {
 }
 
 func (s *Store) EnsureDefaultWorkspace(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO workspaces (id, name) VALUES (1, 'default') ON CONFLICT (id) DO NOTHING`)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Serialize workspace inserts while the explicit default ID is established
+	// and the BIGSERIAL sequence is advanced past every existing workspace.
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE workspaces IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces (id, name) VALUES (1, 'default') ON CONFLICT (id) DO NOTHING`); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `SELECT setval(
+		pg_get_serial_sequence('workspaces', 'id')::regclass,
+		GREATEST(
+			COALESCE(pg_sequence_last_value(pg_get_serial_sequence('workspaces', 'id')::regclass), 0),
+			(SELECT COALESCE(MAX(id), 1) FROM workspaces)
+		),
+		true
+	)`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) IsSuppressed(ctx context.Context, workspaceID int64, email string) (bool, error) {
@@ -265,15 +292,76 @@ func (s *Store) GetMessage(ctx context.Context, id int64) (domain.Message, error
 }
 
 func (s *Store) SetMessageStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status = $2, updated_at = now() WHERE id = $1`, id, status)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status = $2, scheduled_at = CASE WHEN $2 = 'queued' THEN scheduled_at ELSE NULL END, updated_at = now() WHERE id = $1`, id, status)
 	return err
+}
+
+func (s *Store) SetMessageRetryAt(ctx context.Context, id int64, at time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE messages SET status = 'queued', scheduled_at = $2, updated_at = now() WHERE id = $1 AND status = 'sending'`, id, at)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+// ClaimQueuedMessagesForRecovery refreshes the recovery timestamp before
+// returning IDs. If enqueueing fails, they become eligible again after the
+// same grace period; retry messages are not returned before scheduled_at.
+func (s *Store) ClaimQueuedMessagesForRecovery(ctx context.Context, olderThan time.Time, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH candidates AS (
+			SELECT id FROM messages
+			WHERE status = 'queued'
+			  AND updated_at <= $1
+			  AND (scheduled_at IS NULL OR scheduled_at <= now())
+			ORDER BY updated_at, id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE messages AS m
+		SET updated_at = now(), scheduled_at = NULL
+		FROM candidates AS c
+		WHERE m.id = c.id
+		RETURNING m.id`, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+func (s *Store) MarkStaleSendingUnknown(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE messages
+		SET status = 'unknown', updated_at = now()
+		WHERE status = 'sending' AND updated_at <= $1`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *Store) TransitionMessageStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error) {
 	result, err := s.db.ExecContext(
 		ctx,
 		`UPDATE messages
-		 SET status = $3, updated_at = now()
+		 SET status = $3,
+		     scheduled_at = CASE WHEN $3 = 'queued' THEN scheduled_at ELSE NULL END,
+		     updated_at = now()
 		 WHERE id = $1 AND status = $2`,
 		id, fromStatus, toStatus,
 	)
@@ -530,12 +618,17 @@ func (s *Store) ExportMessageLogsCSV(ctx context.Context, workspaceID int64, lim
 }
 
 func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (domain.WebhookEvent, error) {
+	if e.IdentityKey == "" {
+		e.IdentityKey = storeWebhookIdentityKey(e)
+	}
 	row := s.db.QueryRowContext(
 		ctx,
-		`INSERT INTO webhook_events (workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO webhook_events (workspace_id, identity_key, event_type, email, reason, status, attempt_count, last_error, raw_payload)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (workspace_id, identity_key) DO NOTHING
 		 RETURNING id, workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload, created_at`,
 		e.WorkspaceID,
+		e.IdentityKey,
 		e.EventType,
 		e.Email,
 		e.Reason,
@@ -550,7 +643,7 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 	var email sql.NullString
 	var reason sql.NullString
 	var lastError sql.NullString
-	if err := row.Scan(
+	err := row.Scan(
 		&out.ID,
 		&out.WorkspaceID,
 		&out.EventType,
@@ -561,7 +654,25 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 		&lastError,
 		&raw,
 		&out.CreatedAt,
-	); err != nil {
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT id, workspace_id, event_type, email, reason, status, attempt_count, last_error, raw_payload, created_at
+			 FROM webhook_events WHERE workspace_id = $1 AND identity_key = $2`, e.WorkspaceID, e.IdentityKey,
+		).Scan(
+			&out.ID,
+			&out.WorkspaceID,
+			&out.EventType,
+			&email,
+			&reason,
+			&out.Status,
+			&out.AttemptCount,
+			&lastError,
+			&raw,
+			&out.CreatedAt,
+		)
+	}
+	if err != nil {
 		return domain.WebhookEvent{}, err
 	}
 	if email.Valid {
@@ -576,11 +687,24 @@ func (s *Store) InsertWebhookEvent(ctx context.Context, e domain.WebhookEvent) (
 	if raw.Valid {
 		out.RawPayload = raw.String
 	}
+	out.IdentityKey = e.IdentityKey
 	return out, nil
 }
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func storeWebhookIdentityKey(event domain.WebhookEvent) string {
+	material := strings.Join([]string{
+		strconv.FormatInt(event.WorkspaceID, 10),
+		strings.TrimSpace(strings.ToLower(event.EventType)),
+		normalizeEmail(event.Email),
+		strings.TrimSpace(event.Reason),
+		event.RawPayload,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(material))
+	return "v1:" + hex.EncodeToString(sum[:])
 }
 
 func splitDomains(raw string) []string {

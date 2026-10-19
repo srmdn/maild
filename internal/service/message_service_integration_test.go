@@ -10,6 +10,63 @@ import (
 	"github.com/srmdn/maild/internal/domain"
 )
 
+func TestRecoverQueueRequeuesDurableMessagesAndMarksExpiredClaimsUnknown(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Hour)
+	store := &integrationStore{messages: map[int64]domain.Message{
+		1: {ID: 1, Status: "queued", UpdatedAt: now.Add(-time.Hour)},
+		2: {ID: 2, Status: "queued", UpdatedAt: now},
+		3: {ID: 3, Status: "queued", UpdatedAt: now.Add(-time.Hour), ScheduledAt: &future},
+		4: {ID: 4, Status: "sending", UpdatedAt: now.Add(-time.Hour)},
+	}}
+	queue := &integrationQueue{}
+	svc := NewMessageService(store, queue, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+
+	result, err := svc.RecoverQueue(context.Background(), time.Minute, 15*time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Requeued != 1 || result.MarkedUnknown != 1 {
+		t.Fatalf("recovery result = %+v, want one requeue and one unknown", result)
+	}
+	if len(queue.enqueued) != 1 || queue.enqueued[0] != 1 {
+		t.Fatalf("enqueued = %v, want [1]", queue.enqueued)
+	}
+	if store.messages[4].Status != "unknown" {
+		t.Fatalf("expired sending status = %q, want unknown", store.messages[4].Status)
+	}
+	if store.messages[3].ScheduledAt == nil {
+		t.Fatal("future retry schedule was cleared before its due time")
+	}
+}
+
+func TestRetrySchedulingDoesNotRequeueExpiredClaim(t *testing.T) {
+	store := &integrationStore{messages: map[int64]domain.Message{
+		1: {ID: 1, Status: "sending"},
+		2: {ID: 2, Status: "unknown"},
+	}}
+	queue := &integrationQueue{}
+	svc := NewMessageService(store, queue, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+	retryAt := time.Now().Add(time.Minute)
+
+	if err := svc.scheduleRetryState(context.Background(), 1, retryAt); err != nil {
+		t.Fatal(err)
+	}
+	if store.messages[1].Status != "queued" || store.messages[1].ScheduledAt == nil {
+		t.Fatalf("retry state was not persisted: %+v", store.messages[1])
+	}
+	if len(queue.scheduled) != 1 || queue.scheduled[0].id != 1 {
+		t.Fatalf("scheduled retries = %+v, want message 1", queue.scheduled)
+	}
+
+	if err := svc.scheduleRetryState(context.Background(), 2, retryAt); !errors.Is(err, ErrMessageClaimLost) {
+		t.Fatalf("schedule retry for expired claim error = %v, want ErrMessageClaimLost", err)
+	}
+	if store.messages[2].Status != "unknown" {
+		t.Fatalf("expired claim status = %q, want unknown", store.messages[2].Status)
+	}
+}
+
 func TestIntegrationRetryReplayFailoverFlow(t *testing.T) {
 	now := time.Now().UTC().Add(-30 * time.Minute)
 	store := &integrationStore{
@@ -182,6 +239,52 @@ func (s *integrationStore) SetMessageStatus(_ context.Context, id int64, status 
 	s.messages[id] = m
 	return nil
 }
+func (s *integrationStore) SetMessageRetryAt(_ context.Context, id int64, at time.Time) (bool, error) {
+	m, ok := s.messages[id]
+	if !ok {
+		return false, errors.New("message not found")
+	}
+	if m.Status != "sending" {
+		return false, nil
+	}
+	m.Status = "queued"
+	m.ScheduledAt = &at
+	m.UpdatedAt = time.Now()
+	s.messages[id] = m
+	return true, nil
+}
+func (s *integrationStore) ClaimQueuedMessagesForRecovery(_ context.Context, olderThan time.Time, limit int) ([]int64, error) {
+	ids := make([]int64, 0)
+	for id, m := range s.messages {
+		if m.Status != "queued" || m.UpdatedAt.After(olderThan) || (m.ScheduledAt != nil && m.ScheduledAt.After(time.Now())) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	for _, id := range ids {
+		m := s.messages[id]
+		m.UpdatedAt = time.Now()
+		m.ScheduledAt = nil
+		s.messages[id] = m
+	}
+	return ids, nil
+}
+func (s *integrationStore) MarkStaleSendingUnknown(_ context.Context, olderThan time.Time) (int64, error) {
+	var changed int64
+	for id, m := range s.messages {
+		if m.Status == "sending" && !m.UpdatedAt.After(olderThan) {
+			m.Status = "unknown"
+			m.UpdatedAt = time.Now()
+			s.messages[id] = m
+			changed++
+		}
+	}
+	return changed, nil
+}
 func (s *integrationStore) TransitionMessageStatus(_ context.Context, id int64, fromStatus, toStatus string) (bool, error) {
 	m, ok := s.messages[id]
 	if !ok {
@@ -287,7 +390,11 @@ func (s *integrationStore) activeAccountName() string {
 }
 
 type integrationQueue struct {
-	enqueued []int64
+	enqueued  []int64
+	scheduled []struct {
+		id int64
+		at time.Time
+	}
 }
 
 func (q *integrationQueue) Enqueue(_ context.Context, id int64) error {
@@ -297,4 +404,12 @@ func (q *integrationQueue) Enqueue(_ context.Context, id int64) error {
 
 func (q *integrationQueue) Dequeue(context.Context, time.Duration) (int64, bool, error) {
 	return 0, false, nil
+}
+
+func (q *integrationQueue) ScheduleRetry(_ context.Context, id int64, at time.Time) error {
+	q.scheduled = append(q.scheduled, struct {
+		id int64
+		at time.Time
+	}{id: id, at: at})
+	return nil
 }

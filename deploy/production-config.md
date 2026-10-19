@@ -11,7 +11,7 @@ Use `.env.production.example` as the baseline template for production deployment
 | `WEBHOOK_SIGNING_SECRET` | Security + Integrations | Shared with webhook sender(s), treat as a secret. |
 | `POSTGRES_DSN` | Platform/DBA | Must use production DB endpoint and TLS (`sslmode=require` or stronger). |
 | `REDIS_ADDR`, `REDIS_DB` | Platform | Production Redis instance only. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | Messaging Operations | Use provider-issued credentials and verified sender identity. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS_MODE` | Messaging Operations | Use provider-issued credentials and verified sender identity. TLS mode is `starttls` (default/recommended), `implicit_tls`, or `none` (trusted local relay only; authentication is prohibited without TLS). |
 
 ## Rotation Expectations
 
