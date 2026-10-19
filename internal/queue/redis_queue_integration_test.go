@@ -77,3 +77,69 @@ func TestRedisQueueAlternatesReadyAndDueRetries(t *testing.T) {
 		}
 	}
 }
+
+func TestRedisQueueMakesProgressUnderSustainedIngress(t *testing.T) {
+	q := newTestRedisQueue(t)
+	ctx := context.Background()
+	ready := make([]int64, 20)
+	retries := make([]int64, 20)
+	for i := range ready {
+		ready[i] = int64(1000 + i)
+		retries[i] = int64(2000 + i)
+		if err := q.Enqueue(ctx, ready[i]); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.ScheduleRetry(ctx, retries[i], time.Now().Add(-time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stop := make(chan struct{})
+	ingressDemand := make(chan struct{})
+	ingressAck := make(chan error)
+	go func() {
+		for i := int64(0); ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-ingressDemand:
+			}
+			ingressAck <- q.Enqueue(ctx, 3000+i)
+		}
+	}()
+	defer close(stop)
+	requestIngress := func() {
+		ingressDemand <- struct{}{}
+		if err := <-ingressAck; err != nil {
+			t.Fatalf("sustained ingress failed: %v", err)
+		}
+	}
+	requestIngress()
+
+	want := make(map[int64]bool, len(ready)+len(retries))
+	for _, id := range ready {
+		want[id] = true
+	}
+	for _, id := range retries {
+		want[id] = true
+	}
+	seen := make(map[int64]bool, len(want))
+	for i := 0; i < len(want); i++ {
+		id, ok, err := q.Dequeue(ctx, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatalf("queue made no progress at dequeue %d", i)
+		}
+		if want[id] {
+			seen[id] = true
+		}
+		requestIngress()
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Fatalf("backlogged message %d starved during sustained ingress", id)
+		}
+	}
+}
