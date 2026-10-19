@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -289,15 +290,76 @@ func (s *Store) GetMessage(ctx context.Context, id int64) (domain.Message, error
 }
 
 func (s *Store) SetMessageStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status = $2, updated_at = now() WHERE id = $1`, id, status)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status = $2, scheduled_at = CASE WHEN $2 = 'queued' THEN scheduled_at ELSE NULL END, updated_at = now() WHERE id = $1`, id, status)
 	return err
+}
+
+func (s *Store) SetMessageRetryAt(ctx context.Context, id int64, at time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE messages SET status = 'queued', scheduled_at = $2, updated_at = now() WHERE id = $1 AND status = 'sending'`, id, at)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+// ClaimQueuedMessagesForRecovery refreshes the recovery timestamp before
+// returning IDs. If enqueueing fails, they become eligible again after the
+// same grace period; retry messages are not returned before scheduled_at.
+func (s *Store) ClaimQueuedMessagesForRecovery(ctx context.Context, olderThan time.Time, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH candidates AS (
+			SELECT id FROM messages
+			WHERE status = 'queued'
+			  AND updated_at <= $1
+			  AND (scheduled_at IS NULL OR scheduled_at <= now())
+			ORDER BY updated_at, id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE messages AS m
+		SET updated_at = now(), scheduled_at = NULL
+		FROM candidates AS c
+		WHERE m.id = c.id
+		RETURNING m.id`, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+func (s *Store) MarkStaleSendingUnknown(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE messages
+		SET status = 'unknown', updated_at = now()
+		WHERE status = 'sending' AND updated_at <= $1`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *Store) TransitionMessageStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error) {
 	result, err := s.db.ExecContext(
 		ctx,
 		`UPDATE messages
-		 SET status = $3, updated_at = now()
+		 SET status = $3,
+		     scheduled_at = CASE WHEN $3 = 'queued' THEN scheduled_at ELSE NULL END,
+		     updated_at = now()
 		 WHERE id = $1 AND status = $2`,
 		id, fromStatus, toStatus,
 	)

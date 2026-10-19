@@ -132,6 +132,12 @@ Before sending real mail, register an SMTP account with `POST /v1/smtp-accounts`
 | `429 Too Many Requests` | A workspace or recipient-domain rate limit was reached. |
 | `500 Internal Server Error` | maild could not queue or process the request. Check logs and the message timeline. |
 
+Delivery is asynchronous and at-least-once when an SMTP send returns an error:
+the relay may have accepted a message before its response was lost, so a retry
+can produce a duplicate. If a worker claim expires while its result is unclear,
+maild marks the message `unknown` and does not retry it automatically. Check the
+relay's logs before taking manual action.
+
 ## Operate It
 
 API-key-authenticated delivery and operational routes include:

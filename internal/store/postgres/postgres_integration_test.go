@@ -454,6 +454,65 @@ func TestCreateUserWithWorkspaceRollsBackOnWorkspaceFailure(t *testing.T) {
 	}
 }
 
+func TestMessageQueueRecoveryRespectsRetryScheduleAndExpiresClaims(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureDefaultWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "a@x.com", Subject: "stale", Status: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureAt := time.Now().Add(time.Hour)
+	future, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "b@x.com", Subject: "future", Status: "queued", ScheduledAt: &futureAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sending, err := store.CreateMessage(ctx, domain.Message{WorkspaceID: 1, FromEmail: "from@x.com", ToEmail: "c@x.com", Subject: "sending", Status: "sending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, id := range []int64{stale.ID, future.ID, sending.ID} {
+		if _, err := store.DB().ExecContext(ctx, `UPDATE messages SET updated_at = $2 WHERE id = $1`, id, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids, err := store.ClaimQueuedMessagesForRecovery(ctx, time.Now().Add(-time.Minute), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != stale.ID {
+		t.Fatalf("recovered queued IDs = %v, want [%d]", ids, stale.ID)
+	}
+	if count, err := store.MarkStaleSendingUnknown(ctx, time.Now().Add(-15*time.Minute)); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("marked unknown = %d, want 1", count)
+	}
+	got, err := store.GetMessage(ctx, sending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "unknown" {
+		t.Fatalf("stale sending status = %q, want unknown", got.Status)
+	}
+	if updated, err := store.SetMessageRetryAt(ctx, sending.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	} else if updated {
+		t.Fatal("expired claim was requeued after being marked unknown")
+	}
+	got, err = store.GetMessage(ctx, future.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ScheduledAt == nil || !got.ScheduledAt.After(time.Now()) {
+		t.Fatalf("future scheduled_at was not preserved: %v", got.ScheduledAt)
+	}
+}
+
 func TestStoreUserAPIKeys(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

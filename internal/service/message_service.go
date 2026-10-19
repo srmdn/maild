@@ -58,6 +58,20 @@ type RetryScheduler interface {
 	ScheduleRetry(ctx context.Context, id int64, at time.Time) error
 }
 
+type MessageRetryAtStore interface {
+	SetMessageRetryAt(ctx context.Context, id int64, at time.Time) (bool, error)
+}
+
+type MessageRecoveryStore interface {
+	ClaimQueuedMessagesForRecovery(ctx context.Context, olderThan time.Time, limit int) ([]int64, error)
+	MarkStaleSendingUnknown(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
+type MessageRecoveryResult struct {
+	Requeued      int
+	MarkedUnknown int64
+}
+
 type RateLimiter interface {
 	Allow(ctx context.Context, workspaceID int64, recipientDomain string) (bool, string, error)
 }
@@ -115,6 +129,46 @@ func NewMessageService(store MessageStore, queue MessageQueue, sender *smtpclien
 
 func (s *MessageService) Bootstrap(ctx context.Context) error {
 	return s.store.EnsureDefaultWorkspace(ctx)
+}
+
+// RecoverQueue republishes durable queued messages and marks expired sending
+// claims unknown instead of automatically resending an ambiguous SMTP outcome.
+func (s *MessageService) RecoverQueue(ctx context.Context, queuedGrace, sendingLease time.Duration, limit int) (MessageRecoveryResult, error) {
+	store, ok := s.store.(MessageRecoveryStore)
+	if !ok {
+		return MessageRecoveryResult{}, nil
+	}
+	if queuedGrace <= 0 {
+		queuedGrace = 30 * time.Second
+	}
+	if sendingLease <= 0 {
+		sendingLease = 15 * time.Minute
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
+	result := MessageRecoveryResult{}
+	unknown, err := store.MarkStaleSendingUnknown(ctx, time.Now().Add(-sendingLease))
+	if err != nil {
+		return result, err
+	}
+	result.MarkedUnknown = unknown
+
+	ids, err := store.ClaimQueuedMessagesForRecovery(ctx, time.Now().Add(-queuedGrace), limit)
+	if err != nil {
+		return result, err
+	}
+	if len(ids) > 0 && s.queue == nil {
+		return result, errors.New("message queue unavailable")
+	}
+	for _, id := range ids {
+		if err := s.queue.Enqueue(ctx, id); err != nil {
+			return result, err
+		}
+		result.Requeued++
+	}
+	return result, nil
 }
 
 func (s *MessageService) QueueMessage(ctx context.Context, workspaceID int64, fromEmail, toEmail, subject, body string) (domain.Message, error) {
@@ -249,11 +303,17 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 
 	attemptNo, err := s.store.NextAttemptNo(ctx, m.ID)
 	if err != nil {
+		if retryErr := s.scheduleRetryState(ctx, m.ID, time.Now().Add(time.Minute)); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
 		return err
 	}
 
 	creds, err := s.resolveCredentials(ctx, m.WorkspaceID)
 	if err != nil {
+		if retryErr := s.scheduleRetryState(ctx, m.ID, time.Now().Add(time.Minute)); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
 		return err
 	}
 	provider := smtpclient.ProviderName(creds)
@@ -261,7 +321,8 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 	err = s.sender.Send(creds, m.ToEmail, m.Subject, m.BodyText)
 	if err == nil {
 		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, "accepted by smtp server", true); err != nil {
-			return err
+			markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+			return errors.Join(err, markErr)
 		}
 		_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
 			WorkspaceID: m.WorkspaceID,
@@ -270,12 +331,17 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			Quantity:    1,
 			Metadata:    `{"provider":"` + provider + `"}`,
 		})
-		return s.store.SetMessageStatus(ctx, m.ID, "sent")
+		if err := s.store.SetMessageStatus(ctx, m.ID, "sent"); err != nil {
+			markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+			return errors.Join(err, markErr)
+		}
+		return nil
 	}
 
 	safeErr := sanitize.SMTPError(err.Error())
 	if insertErr := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, safeErr, false); insertErr != nil {
-		return insertErr
+		markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
+		return errors.Join(insertErr, markErr)
 	}
 	_ = s.store.InsertMeteringEvent(ctx, domain.MeteringEvent{
 		WorkspaceID: m.WorkspaceID,
@@ -302,18 +368,45 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 			Quantity:    1,
 			Metadata:    `{"provider":"` + provider + `"}`,
 		})
-		return s.store.SetMessageStatus(ctx, m.ID, "failed")
+		ok, err := s.store.TransitionMessageStatus(ctx, m.ID, "sending", "failed")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrMessageClaimLost
+		}
+		return nil
 	}
 
-	if err := s.store.SetMessageStatus(ctx, m.ID, "queued"); err != nil {
+	// SMTP errors are retried with at-least-once semantics: a relay may have
+	// accepted DATA before a connection error reached us, so duplicates remain
+	// possible. Expired worker claims are handled separately as unknown.
+	return s.scheduleRetryState(ctx, m.ID, time.Now().Add(backoffDuration(attemptNo)))
+}
+
+func (s *MessageService) scheduleRetryState(ctx context.Context, messageID int64, at time.Time) error {
+	if store, ok := s.store.(MessageRetryAtStore); ok {
+		updated, err := store.SetMessageRetryAt(ctx, messageID, at)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return ErrMessageClaimLost
+		}
+	} else if err := s.store.SetMessageStatus(ctx, messageID, "queued"); err != nil {
 		return err
 	}
-
-	if sched, ok := s.queue.(RetryScheduler); ok {
-		return sched.ScheduleRetry(ctx, m.ID, time.Now().Add(backoffDuration(attemptNo)))
+	if scheduler, ok := s.queue.(RetryScheduler); ok {
+		return scheduler.ScheduleRetry(ctx, messageID, at)
 	}
-	time.Sleep(backoffDuration(attemptNo))
-	return s.queue.Enqueue(ctx, m.ID)
+	if s.queue == nil {
+		return errors.New("message queue unavailable")
+	}
+	delay := time.Until(at)
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return s.queue.Enqueue(ctx, messageID)
 }
 
 func (s *MessageService) PopQueue(ctx context.Context, timeout time.Duration) (int64, bool, error) {
@@ -903,6 +996,7 @@ func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspa
 var ErrBadRequest = errors.New("bad request")
 var ErrRateLimited = errors.New("rate limited")
 var ErrBlockedRecipientDomain = errors.New("blocked recipient domain")
+var ErrMessageClaimLost = errors.New("message processing claim was lost")
 
 func extractDomain(email string) string {
 	at := strings.LastIndex(email, "@")
