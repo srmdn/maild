@@ -831,9 +831,10 @@ func (s *MessageService) ProcessWebhookEvent(ctx context.Context, workspaceID in
 	eventType = strings.ToLower(strings.TrimSpace(eventType))
 	email = strings.TrimSpace(email)
 	reason = strings.TrimSpace(reason)
+	eventType = classifyStoredWebhookBounce(eventType, reason)
 	if reason == "" {
 		switch eventType {
-		case "bounce", "complaint":
+		case "bounce_permanent", "bounce_temporary", "bounce_unclassified", "complaint":
 			reason = "provider_" + eventType
 		case "unsubscribe":
 			reason = "provider_unsubscribe"
@@ -933,7 +934,7 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 			AttemptCount: event.AttemptCount,
 		}
 
-		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+		eventType := classifyStoredWebhookBounce(strings.ToLower(strings.TrimSpace(event.EventType)), event.Reason)
 		email := strings.TrimSpace(strings.ToLower(event.Email))
 		reason := strings.TrimSpace(event.Reason)
 		if email == "" {
@@ -977,11 +978,19 @@ func (s *MessageService) ReplayWebhookDeadLetters(ctx context.Context, workspace
 }
 
 func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspaceID int64, eventType, email, reason string) (int, error) {
+	if eventType == "bounce_temporary" {
+		// Temporary provider failures are recorded for audit, but do not create
+		// permanent recipient suppressions.
+		return 1, nil
+	}
+	if eventType == "bounce_unclassified" || eventType == "bounce" {
+		return 1, fmt.Errorf("unclassified bounce; recipient was not suppressed")
+	}
 	var lastErr error
 	for attempt := 1; attempt <= s.webhookApplyMaxAttempts; attempt++ {
 		var err error
 		switch eventType {
-		case "bounce", "complaint":
+		case "bounce_permanent", "complaint":
 			err = s.store.AddSuppression(ctx, workspaceID, email, reason)
 		case "unsubscribe":
 			err = s.store.AddUnsubscribe(ctx, workspaceID, email, reason)
@@ -1000,6 +1009,20 @@ func (s *MessageService) applyWebhookEventWithRetry(ctx context.Context, workspa
 	}
 
 	return s.webhookApplyMaxAttempts, lastErr
+}
+
+func classifyStoredWebhookBounce(eventType, reason string) string {
+	if eventType != "bounce" {
+		return eventType
+	}
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "hard_bounce", "permanent", "permanent/general", "permanent/suppressed":
+		return "bounce_permanent"
+	case "soft_bounce", "transient", "temporary", "temporary/general", "transient/general":
+		return "bounce_temporary"
+	default:
+		return "bounce_unclassified"
+	}
 }
 
 var ErrBadRequest = errors.New("bad request")

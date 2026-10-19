@@ -126,11 +126,57 @@ func TestReplayWebhookDeadLettersFailureBookkeeping(t *testing.T) {
 	}
 }
 
+func TestApplyWebhookBounceClassification(t *testing.T) {
+	store := &replayStore{}
+	svc := NewMessageService(store, nil, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+
+	for _, eventType := range []string{"bounce_temporary"} {
+		if attempts, err := svc.applyWebhookEventWithRetry(context.Background(), 1, eventType, "user@example.com", "temporary"); err != nil || attempts != 1 {
+			t.Fatalf("temporary bounce = (%d, %v), want (1, nil)", attempts, err)
+		}
+	}
+	if len(store.suppressionCalls) != 0 {
+		t.Fatalf("temporary bounce created %d suppressions, want 0", len(store.suppressionCalls))
+	}
+
+	for _, eventType := range []string{"bounce_permanent", "complaint"} {
+		if attempts, err := svc.applyWebhookEventWithRetry(context.Background(), 1, eventType, "user@example.com", eventType); err != nil || attempts != 1 {
+			t.Fatalf("%s = (%d, %v), want (1, nil)", eventType, attempts, err)
+		}
+	}
+	if len(store.suppressionCalls) != 2 {
+		t.Fatalf("permanent bounce and complaint created %d suppressions, want 2", len(store.suppressionCalls))
+	}
+
+	if attempts, err := svc.applyWebhookEventWithRetry(context.Background(), 1, "bounce_unclassified", "user@example.com", ""); err == nil || attempts != 1 {
+		t.Fatalf("unclassified bounce = (%d, %v), want one-attempt error", attempts, err)
+	}
+	if len(store.suppressionCalls) != 2 {
+		t.Fatalf("unclassified bounce created suppression; calls = %d", len(store.suppressionCalls))
+	}
+}
+
+func TestProcessTemporaryBounceIsAuditedWithoutSuppression(t *testing.T) {
+	store := &replayStore{}
+	svc := NewMessageService(store, nil, nil, nil, nil, nil, 1, 1, 0, 0, false, 0, 0, 0)
+	event, err := svc.ProcessWebhookEvent(context.Background(), 1, "bounce_temporary", "user@example.com", "Transient/General", `{"fixture":true}`)
+	if err != nil {
+		t.Fatalf("ProcessWebhookEvent error = %v", err)
+	}
+	if event.EventType != "bounce_temporary" || event.Status != "applied" {
+		t.Fatalf("stored event = %#v, want applied temporary bounce", event)
+	}
+	if len(store.suppressionCalls) != 0 {
+		t.Fatalf("temporary bounce created %d suppressions, want 0", len(store.suppressionCalls))
+	}
+}
+
 type replayStore struct {
 	deadLetters      []domain.WebhookEvent
 	byID             map[int64]domain.WebhookEvent
 	updated          map[int64]replayUpdate
 	suppressionCalls []suppressionCall
+	inserted         []domain.WebhookEvent
 }
 
 type replayUpdate struct {
@@ -212,8 +258,9 @@ func (s *replayStore) MeteringSummary(context.Context, int64, time.Time, time.Ti
 func (s *replayStore) ExportMessageLogsCSV(context.Context, int64, int) (string, error) {
 	return "", nil
 }
-func (s *replayStore) InsertWebhookEvent(context.Context, domain.WebhookEvent) (domain.WebhookEvent, error) {
-	return domain.WebhookEvent{}, nil
+func (s *replayStore) InsertWebhookEvent(_ context.Context, event domain.WebhookEvent) (domain.WebhookEvent, error) {
+	s.inserted = append(s.inserted, event)
+	return event, nil
 }
 func (s *replayStore) ListWebhookEvents(context.Context, int64, int, string, time.Time, time.Time) ([]domain.WebhookEvent, error) {
 	return nil, nil
