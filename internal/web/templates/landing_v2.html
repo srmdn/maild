@@ -202,7 +202,7 @@
     <header class="lp-topbar">
       <div class="lp-topbar-inner lp-shell" style="max-width:none;padding-left:var(--md-space-4);padding-right:var(--md-space-4);">
         <a href="/" class="lp-brand">maild</a>
-        <button class="lp-toggle" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+        <button class="lp-toggle" id="lpNavToggle" type="button" aria-label="Menu" aria-controls="lpNav" aria-expanded="false" onclick="toggleNav()">&#9776;</button>
         <nav class="lp-nav" id="lpNav">
           <a class="lp-link" href="#features">Features</a>
           <a class="lp-link" href="#how">How it works</a>
@@ -224,11 +224,11 @@
 
     <main class="lp-shell">
       <section class="lp-hero">
-        <p class="lp-kicker">SendGrid / Mailgun alternative</p>
+        <p class="lp-kicker">Self-hosted email delivery control</p>
         <div class="lp-hero-grid">
           <div>
-            <h1 class="lp-title">Own the pipe behind your <span class="hl">email</span></h1>
-            <p class="lp-sub">A self-hosted outbound email control plane. Bring your own SMTP, and let maild handle the queue, retries, safety rails, and observability — so your email actually lands.</p>
+            <h1 class="lp-title">Control the delivery behind your <span class="hl">email</span></h1>
+            <p class="lp-sub">A control layer for applications that send transactional email through their own SMTP. maild queues messages, applies safety rules, retries failures, and records what happened.</p>
             <div class="lp-cta-row">
               {{if .AllowSignup}}
               <a href="/signup" class="lp-btn lp-btn--accent">Start Free</a>
@@ -361,7 +361,7 @@
         <span class="lp-footer-brand">maild</span>
         <span class="lp-footer-mono">Built for developers who want control over their email delivery.</span>
         <div class="lp-footer-links">
-          <a href="/docs">Docs</a>
+          <a href="https://github.com/srmdn/maild#readme">Docs</a>
           <a href="https://github.com/srmdn/maild" target="_blank" rel="noopener">GitHub</a>
           <a href="/support">Support</a>
           {{if .AllowSignup}}<a href="/signup">Get Started</a>{{end}}
@@ -372,11 +372,20 @@
   </div>
 
   <script>
+    function closeNav() {
+      document.getElementById('lpNav').classList.remove('open');
+      document.getElementById('lpNavToggle').setAttribute('aria-expanded', 'false');
+    }
     function toggleNav() {
-      document.getElementById('lpNav').classList.toggle('open');
+      var nav = document.getElementById('lpNav');
+      var isOpen = nav.classList.toggle('open');
+      document.getElementById('lpNavToggle').setAttribute('aria-expanded', String(isOpen));
     }
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') document.getElementById('lpNav').classList.remove('open');
+      if (e.key === 'Escape') closeNav();
+    });
+    document.querySelectorAll('#lpNav a').forEach(function (link) {
+      link.addEventListener('click', closeNav);
     });
 
     // duplicate marquee track for a seamless infinite loop
