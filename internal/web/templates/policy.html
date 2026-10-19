@@ -54,11 +54,7 @@
     <section class="md-grid md-grid-2">
       <article class="md-panel">
         <h3>Edit Policy</h3>
-        <p class="md-muted">Saving requires an admin key.</p>
-        <div class="md-form-row">
-          <label class="md-label" for="apiKey">Admin API Key</label>
-          <input class="md-input" id="apiKey" type="text" placeholder="change-me-admin">
-        </div>
+        <p class="md-muted">Saving requires the workspace admin role.</p>
         <form id="policyForm">
           <div class="md-grid md-grid-2">
             <div class="md-form-row">
@@ -159,7 +155,6 @@
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const apiKey = document.getElementById('apiKey').value.trim();
     const body = {
       workspace_id: {{.WorkspaceID}},
       rate_limit_workspace_per_hour: Number(document.getElementById('rateWorkspace').value),
@@ -169,7 +164,7 @@
     statusEl.textContent = 'Saving policy...';
     const res = await fetch('/v1/workspaces/policy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     const text = await res.text();

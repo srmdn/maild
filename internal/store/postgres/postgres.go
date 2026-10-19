@@ -259,7 +259,7 @@ func (s *Store) GetMessage(ctx context.Context, id int64) (domain.Message, error
 		&m.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Message{}, errors.New("message not found")
+		return domain.Message{}, domain.ErrMessageNotFound
 	}
 	return m, err
 }

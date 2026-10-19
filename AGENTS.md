@@ -13,15 +13,17 @@ AGPL; revenue from sponsors/support. No tags or releases before v1.0 (see
 
 ## Stack
 
-Go (1.27) with `cmd/server` as the single entry point; PostgreSQL + Redis;
-server-rendered `html/template` UI in `internal/web` (no Node/build chain).
+Go (version in `go.mod`) with `cmd/server` as the single entry point;
+PostgreSQL + Redis; server-rendered `html/template` UI in `internal/web`
+(no Node/build chain).
 
 ## Where to look
 
 - Layout and entry point: `cmd/server`, `internal/` (subpackages are
   self-describing: `api`, `auth`, `service`, `worker`, `queue`, ...).
 - Build/run/test/verify: `Makefile` (targets include `setup`, `run`, `verify`,
-  `test-store`, `vuln`).
+  `test-store`, `test-auth`, `vuln`).
+- Session/API authentication and workspace scope: `docs/authentication.md`.
 - Config and env surface: `internal/config/config.go`, `.env.example`,
   `.env.production.example`, and `deploy/production-config.md`.
 - Product/API/roadmap: `README.md`, `ROADMAP.md`, `RELEASING.md`.
@@ -37,30 +39,53 @@ server-rendered `html/template` UI in `internal/web` (no Node/build chain).
 - Normalize emails case-insensitively.
 - Never commit a real `.env`. The app runs behind nginx, so trust
   `X-Forwarded-For`/`X-Real-IP` only from that proxy.
-- Apply `gofmt`; `make verify` is the gate.
+- Never expose instance-wide API keys in HTML or browser JavaScript. Use
+  sessions for the UI and workspace-scoped personal keys for user API access.
+- Render untrusted browser data as text; avoid interpolating it into HTML.
 
-## Review expectations (mail pipeline)
+## Validation
 
-- rate-limit/backoff behavior
-- suppression list enforcement
-- unsubscribe behavior
-- bounce/complaint handling
-- absence of credential leaks in logs
+- Apply `gofmt` to changed Go files; run `make verify` for code changes.
+- For auth, workspace, key, or related migration changes, also run
+  `make test-auth`. Follow `docs/authentication.md` for the required environment
+  variables and use separate disposable store/HTTP databases and test Redis.
+  Integration tests can delete data; never point them at production.
+- Use `make verify-full` when checking vulnerabilities too; `make verify` alone
+  does not include that check. Report skipped dependency-backed tests and
+  unresolved failures explicitly.
+- For documentation-only changes, check changed text, referenced paths, and
+  command accuracy; application tests are unnecessary unless behavior changed.
 
-## Operating rules
+## Code Review Rules
 
-1. Humans own final decisions, reviews, and commits.
-2. AI output must be validated for correctness, security, and licensing.
-3. Keep changes small, traceable, and reversible.
-4. No AI branding or co-author trailers in commit messages.
-5. Never paste production secrets, customer data, or private keys into
-   external AI tools.
-6. If requirements are unclear, ask one concise question instead of guessing.
+- Flag workspace data access without ownership and role checks, including
+  message timelines and omitted workspace IDs. Personal keys must use current
+  membership and respect revocation; only explicit instance keys grant global
+  access.
+- Flag session writes without same-origin protection and any credential leaks
+  in responses, templates, logs, or error messages.
+- For mail pipeline changes, check rate limits and retry/backoff, suppression
+  enforcement, unsubscribe behavior, and bounce/complaint handling. Flag changes
+  that bypass these controls or retry permanently rejected messages.
 
-## Commit ownership
+## Working agreements
 
-Human-authored commit messages. Use `scripts/check-commit-attribution.sh`
-before pushing.
+- Humans own scope, final review, and release decisions. Validate changes for
+  correctness, security, and licensing; keep them traceable and reversible.
+- When the user requests a commit, agents may stage the intended changes,
+  write an accurate commit message, and create the commit. Commit authorization
+  does not authorize pushing, releasing, or deploying; obtain explicit user
+  authorization for those actions.
+- Preserve unrelated local changes. Never commit real `.env` files, production
+  secrets, customer data, private keys, or machine-specific operational state;
+  never paste sensitive data into external AI tools.
+- Do not add AI branding or co-author trailers to commit messages. Run
+  `scripts/check-commit-attribution.sh` before pushing.
+- Ask one concise question when ambiguity affects scope, security, or an
+  irreversible action. Resolve routine implementation choices within the
+  authorized scope without repeatedly asking for approval.
 
-Refer to the shared skills (Git change management, secret remediation,
-continuity, repository hygiene) rather than restating them here.
+These instructions are self-contained for this repository. Contributors do not
+need access to personal Codex skills or files outside the checkout. Keep project
+setup, security invariants, validation commands, and review expectations here;
+personal agent tooling may supplement them but is never a prerequisite.

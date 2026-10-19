@@ -454,8 +454,20 @@ func (h *AuthHandler) DismissOnboarding(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "dismissed"})
 }
 
-func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
+var sessionOrigin http.CrossOriginProtection
+
+func SameOrigin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := sessionOrigin.Check(r); err != nil {
+			writeError(w, http.StatusForbidden, "cross-origin request rejected")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return SameOrigin(func(w http.ResponseWriter, r *http.Request) {
 		sessionID, err := h.getSessionID(r)
 		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -483,10 +495,14 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
-		ctx = context.WithValue(ctx, workspaceIDContextKey, userWithWS.WorkspaceID)
-		next(w, r.WithContext(ctx))
-	}
+		r = withPrincipal(r, Principal{UserID: userID, WorkspaceID: userWithWS.WorkspaceID, Role: Role(userWithWS.Role)})
+		if _, ok := PrincipalFromContext(r.Context()); !ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		next(w, r)
+	})
 }
 
 func (h *AuthHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
@@ -495,19 +511,13 @@ func (h *AuthHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := h.getSessionID(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	userID, err := h.sessionStore.Get(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	keys, err := h.store.ListAPIKeys(r.Context(), userID)
+	keys, err := h.store.ListAPIKeys(r.Context(), userID, workspaceID(r))
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -545,15 +555,9 @@ func (h *AuthHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := h.getSessionID(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := h.sessionStore.Get(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -582,7 +586,7 @@ func (h *AuthHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	keyHash := crypto.HashAPIKey(rawKey)
 	keyPrefix := crypto.APIKeyPrefix(rawKey)
 
-	k, err := h.store.CreateAPIKey(r.Context(), userID, req.Name, keyHash)
+	k, err := h.store.CreateAPIKey(r.Context(), userID, workspaceID(r), req.Name, keyHash, keyPrefix)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") {
 			writeError(w, http.StatusConflict, "key name already exists")
@@ -611,15 +615,9 @@ func (h *AuthHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := h.getSessionID(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := h.sessionStore.Get(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -635,7 +633,7 @@ func (h *AuthHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.DeleteAPIKey(r.Context(), userID, req.ID); err != nil {
+	if err := h.store.DeleteAPIKey(r.Context(), userID, workspaceID(r), req.ID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -714,17 +712,31 @@ func legacyHash(password string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-const userIDContextKey ctxKey = "user_id"
-const workspaceIDContextKey ctxKey = "workspace_id"
-
 func UserIDFromContext(ctx context.Context) (int64, bool) {
-	v := ctx.Value(userIDContextKey)
-	id, ok := v.(int64)
-	return id, ok
+	p, ok := PrincipalFromContext(ctx)
+	return p.UserID, ok && !p.Global
 }
 
 func WorkspaceIDFromContext(ctx context.Context) (int64, bool) {
-	v := ctx.Value(workspaceIDContextKey)
-	id, ok := v.(int64)
-	return id, ok
+	p, ok := PrincipalFromContext(ctx)
+	return p.WorkspaceID, ok && !p.Global
+}
+
+func workspaceID(r *http.Request) int64 {
+	id, _ := WorkspaceIDFromContext(r.Context())
+	return id
+}
+
+// An explicitly supplied invalid key never falls back to a valid session.
+func (h *AuthHandler) RequireCredentials(headerName, adminKey, operatorKey string, next http.HandlerFunc) http.HandlerFunc {
+	keys := APIKeyMiddleware(headerName, adminKey, operatorKey, h.store, next)
+	session := h.RequireAuth(next)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if _, present := r.Header[http.CanonicalHeaderKey(headerName)]; present {
+			keys(w, r)
+			return
+		}
+		session(w, r)
+	}
 }

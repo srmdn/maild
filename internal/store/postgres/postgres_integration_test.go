@@ -39,7 +39,7 @@ func truncateAll(t *testing.T, db *sql.DB) {
 	_, err := db.Exec(`TRUNCATE TABLE
 		message_attempts, messages, suppressions, unsubscribes, smtp_accounts,
 		webhook_events, workspace_policies, metering_events, domains,
-		user_api_keys, user_workspaces, users, workspaces, schema_migrations
+		user_api_keys, user_workspaces, users, workspaces
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
@@ -404,32 +404,70 @@ func TestStoreUserAPIKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	k, err := store.CreateAPIKey(ctx, u.ID, "k1", "hash1")
+	ws, err := store.CreateWorkspaceForUser(ctx, u.ID, "keys workspace")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k.ID == 0 || k.Name != "k1" {
+	k, err := store.CreateAPIKey(ctx, u.ID, ws, "k1", "hash1", "mk_demo1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.ID == 0 || k.Name != "k1" || k.WorkspaceID != ws || k.KeyPrefix != "mk_demo1" {
 		t.Fatalf("bad api key: %+v", k)
 	}
-	keys, err := store.ListAPIKeys(ctx, u.ID)
+	keys, err := store.ListAPIKeys(ctx, u.ID, ws)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(keys))
 	}
-	if _, err := store.CreateAPIKey(ctx, u.ID, "k1", "hash2"); err == nil {
+	if _, err := store.CreateAPIKey(ctx, u.ID, ws, "k1", "hash2", "mk_demo2"); err == nil {
 		t.Fatal("expected duplicate key name error")
 	}
 
-	if err := store.DeleteAPIKey(ctx, u.ID, k.ID); err != nil {
+	identity, err := store.AuthenticateAPIKey(ctx, "hash1")
+	if err != nil || identity.UserID != u.ID || identity.WorkspaceID != ws || identity.Role != "admin" {
+		t.Fatalf("identity=%+v err=%v", identity, err)
+	}
+	keys, err = store.ListAPIKeys(ctx, u.ID, ws)
+	if err != nil || keys[0].LastUsedAt == nil || keys[0].KeyPrefix != "mk_demo1" {
+		t.Fatalf("last use/prefix: %+v %v", keys, err)
+	}
+	other, err := store.CreateWorkspaceForUser(ctx, u.ID, "other workspace")
+	if err != nil {
 		t.Fatal(err)
 	}
-	keys, _ = store.ListAPIKeys(ctx, u.ID)
+	if err := store.DeleteAPIKey(ctx, u.ID, other, k.ID); err == nil {
+		t.Fatal("cross-workspace delete succeeded")
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE user_workspaces SET role = 'viewer' WHERE user_id=$1 AND workspace_id=$2`, u.ID, ws); err != nil {
+		t.Fatal(err)
+	}
+	identity, err = store.AuthenticateAPIKey(ctx, "hash1")
+	if err != nil || identity.Role != "viewer" {
+		t.Fatalf("role change not observed: %+v %v", identity, err)
+	}
+	if _, err := store.CreateAPIKey(ctx, u.ID, ws, "viewer key", "viewerhash", "mk_view"); err == nil {
+		t.Fatal("viewer could create key")
+	}
+	if _, err := store.DB().ExecContext(ctx, `DELETE FROM user_workspaces WHERE user_id=$1 AND workspace_id=$2`, u.ID, ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AuthenticateAPIKey(ctx, "hash1"); err == nil {
+		t.Fatal("removed membership still authenticates")
+	}
+	if err := store.DeleteAPIKey(ctx, u.ID, ws, k.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AuthenticateAPIKey(ctx, "hash1"); err == nil {
+		t.Fatal("revoked key still authenticates")
+	}
+	keys, _ = store.ListAPIKeys(ctx, u.ID, ws)
 	if len(keys) != 0 {
 		t.Fatalf("expected 0 keys after delete, got %d", len(keys))
 	}
-	if err := store.DeleteAPIKey(ctx, u.ID, 999999); err == nil {
+	if err := store.DeleteAPIKey(ctx, u.ID, ws, 999999); err == nil {
 		t.Fatal("expected error deleting nonexistent key")
 	}
 }
