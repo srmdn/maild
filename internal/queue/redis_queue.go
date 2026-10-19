@@ -13,6 +13,7 @@ type RedisQueue struct {
 	client   *redis.Client
 	key      string
 	retryKey string
+	fairKey  string
 }
 
 func NewRedis(ctx context.Context, addr string, db int) (*RedisQueue, error) {
@@ -23,7 +24,7 @@ func NewRedis(ctx context.Context, addr string, db int) (*RedisQueue, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, err
 	}
-	return &RedisQueue{client: client, key: "maild:queue:messages", retryKey: "maild:queue:retry"}, nil
+	return &RedisQueue{client: client, key: "maild:queue:messages", retryKey: "maild:queue:retry", fairKey: "maild:queue:last-source"}, nil
 }
 
 func (q *RedisQueue) Close() error {
@@ -41,11 +42,12 @@ func (q *RedisQueue) Check(ctx context.Context) bool {
 }
 
 func (q *RedisQueue) Enqueue(ctx context.Context, id int64) error {
-	return q.client.RPush(ctx, q.key, id).Err()
+	// Push new work on the left; Dequeue pops from the right to preserve FIFO.
+	return q.client.LPush(ctx, q.key, id).Err()
 }
 
 func (q *RedisQueue) Dequeue(ctx context.Context, timeout time.Duration) (int64, bool, error) {
-	if id, ok, err := q.popReadyRetry(ctx); err != nil {
+	if id, ok, err := q.popNext(ctx); err != nil {
 		return 0, false, err
 	} else if ok {
 		return id, true, nil
@@ -76,15 +78,34 @@ func (q *RedisQueue) ScheduleRetry(ctx context.Context, id int64, at time.Time) 
 	}).Err()
 }
 
-var popReadyRetryScript = redis.NewScript(`
-local res = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, 1)
-if #res == 0 then return nil end
-redis.call('ZREM', KEYS[1], res[1])
-return res[1]
+// popNext atomically selects work from the FIFO ready list and delayed retry
+// set. When both are ready, it alternates sources so neither backlog starves.
+var popNextScript = redis.NewScript(`
+local retry = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1], 'LIMIT', 0, 1)
+local has_ready = redis.call('LLEN', KEYS[1]) > 0
+local source = nil
+
+if #retry > 0 and has_ready then
+  local last = redis.call('GET', KEYS[3]) or 'ready'
+  source = (last == 'retry') and 'ready' or 'retry'
+elseif #retry > 0 then
+  source = 'retry'
+elseif has_ready then
+  source = 'ready'
+else
+  return nil
+end
+
+redis.call('SET', KEYS[3], source)
+if source == 'retry' then
+  redis.call('ZREM', KEYS[2], retry[1])
+  return retry[1]
+end
+return redis.call('RPOP', KEYS[1])
 `)
 
-func (q *RedisQueue) popReadyRetry(ctx context.Context) (int64, bool, error) {
-	val, err := popReadyRetryScript.Run(ctx, q.client, []string{q.retryKey}, time.Now().UnixMilli()).Result()
+func (q *RedisQueue) popNext(ctx context.Context) (int64, bool, error) {
+	val, err := popNextScript.Run(ctx, q.client, []string{q.key, q.retryKey, q.fairKey}, time.Now().UnixMilli()).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return 0, false, nil
