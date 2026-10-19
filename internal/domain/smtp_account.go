@@ -10,6 +10,7 @@ type SMTPAccount struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	FromEmail   string `json:"from_email"`
+	TLSMode     string `json:"tls_mode,omitempty"`
 }
 
 type SMTPAccountSummary struct {

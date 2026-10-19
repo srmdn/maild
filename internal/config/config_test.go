@@ -44,6 +44,7 @@ var configEnvKeys = []string{
 	"SMTP_USERNAME",
 	"SMTP_PASSWORD",
 	"SMTP_FROM",
+	"SMTP_TLS_MODE",
 }
 
 func TestValidateDevelopmentDefaultsPass(t *testing.T) {
@@ -53,6 +54,22 @@ func TestValidateDevelopmentDefaultsPass(t *testing.T) {
 	cfg := Load()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected development defaults to pass validation, got error: %v", err)
+	}
+}
+
+func TestSMTPDefaultsToSTARTTLSAndRejectsInsecureAuthentication(t *testing.T) {
+	resetConfigEnv(t)
+	t.Setenv("APP_ENV", "development")
+	cfg := Load()
+	if cfg.SMTPTLSMode != "starttls" {
+		t.Fatalf("SMTP_TLS_MODE default = %q, want starttls", cfg.SMTPTLSMode)
+	}
+
+	t.Setenv("SMTP_TLS_MODE", "none")
+	t.Setenv("SMTP_USERNAME", "smtp-user")
+	cfg = Load()
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "SMTP authentication requires") {
+		t.Fatalf("Validate error = %v, want insecure SMTP auth rejection", err)
 	}
 }
 

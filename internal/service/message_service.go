@@ -318,7 +318,7 @@ func (s *MessageService) ProcessOne(ctx context.Context, messageID int64) error 
 	}
 	provider := smtpclient.ProviderName(creds)
 
-	err = s.sender.Send(creds, m.ToEmail, m.Subject, m.BodyText)
+	err = s.sender.Send(ctx, creds, m.ToEmail, m.Subject, m.BodyText)
 	if err == nil {
 		if err := s.store.InsertAttempt(ctx, m.ID, attemptNo, provider, "accepted by smtp server", true); err != nil {
 			markErr := s.store.SetMessageStatus(ctx, m.ID, "unknown")
@@ -422,6 +422,14 @@ func (s *MessageService) AddUnsubscribe(ctx context.Context, workspaceID int64, 
 }
 
 func (s *MessageService) UpsertSMTPAccount(ctx context.Context, account domain.SMTPAccount) error {
+	mode, err := smtpclient.NormalizeTLSMode(account.TLSMode)
+	if err != nil {
+		return err
+	}
+	if mode == smtpclient.TLSModeNone && (account.Username != "" || account.Password != "") {
+		return errors.New("SMTP authentication requires TLS")
+	}
+	account.TLSMode = mode
 	payload, err := json.Marshal(account)
 	if err != nil {
 		return err
@@ -492,6 +500,7 @@ func (s *MessageService) resolveCredentials(ctx context.Context, workspaceID int
 		Username: account.Username,
 		Password: account.Password,
 		From:     account.FromEmail,
+		TLSMode:  account.TLSMode,
 	}, nil
 }
 
@@ -500,7 +509,7 @@ func (s *MessageService) ValidateSMTPAccount(ctx context.Context, workspaceID in
 	if err != nil {
 		return "", err
 	}
-	if err := s.sender.Validate(creds, 5*time.Second); err != nil {
+	if err := s.sender.Validate(ctx, creds, 5*time.Second); err != nil {
 		return "", err
 	}
 	return smtpclient.ProviderName(creds), nil
