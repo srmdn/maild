@@ -1,209 +1,172 @@
 # maild
 
-Outbound email operations control plane for teams that want reliable sending without heavyweight ESP lock-in.
+`maild` is a self-hosted delivery control layer for applications that send transactional email through their own SMTP relay. Your application calls an HTTP API; maild queues the message, applies delivery rules, sends through the configured relay, and records what happened.
 
-## Manifesto
+## Who It Is For
 
-Sending email is easy. Operating email safely at scale is hard.
+Use maild when you operate an application and already have, or want to choose, an SMTP provider. It centralizes work that otherwise ends up scattered across application code and provider dashboards:
 
-`maild` exists to make outbound delivery operations auditable and reliable:
-- queue first, send safely
-- enforce suppression and unsubscribe rules everywhere
-- keep failure handling explicit (retries, replay, incident context)
-- let operators see what happened and act fast
+- queueing and retrying sends
+- switching to a standby SMTP account after repeated failures
+- enforcing suppression, unsubscribe, and blocked-recipient-domain rules
+- recording message attempts, webhook outcomes, and incident context
 
-`maild` is intentionally focused. It is not trying to be a full CRM or marketing automation suite.
+maild is for transactional and conversational application email, such as account notifications, receipts, and password resets.
 
-## What Problem `maild` Solves
+## What It Is Not
 
-Most teams end up with ad-hoc scripts plus provider dashboards. That creates blind spots:
-- retries and rate limits are inconsistent
-- suppression/unsubscribe enforcement is fragile
-- webhook failures are hard to recover from
-- incidents are slow to triage because logs and context are fragmented
+maild is not an inbox host, mail server, marketing suite, or drop-in replacement for SendGrid or Mailgun. It does not accept SMTP submissions from your application.
 
-`maild` centralizes those concerns in one control plane.
+Today, applications integrate with maild by calling its authenticated HTTP API. A send supports one recipient and a plain-text body. HTML bodies, attachments, CC/BCC, templates, SDKs, and a WordPress plugin are not available yet.
 
-## What `maild` Is (And Is Not)
+For WordPress specifically, maild cannot be configured as an SMTP host in an SMTP plugin. It would need a dedicated WordPress plugin or an SMTP-submission interface first.
 
-`maild` is:
-- outbound send orchestration (API -> queue -> worker)
-- SMTP provider control with failover-aware operations
-- policy and compliance safety layer
-- operator console for logs, timeline, and incident workflows
+## How It Works
 
-`maild` is not:
-- inbox hosting (no IMAP/POP/webmail, no mailbox provisioning)
-- a mail server (it sends through an existing SMTP relay; it is not a Postfix/Dovecot stack)
-- mass / cold-email tooling (transactional & conversational only, to respect relay provider AUP)
-- a complete ESP marketing suite (yet)
+```text
+your Go / Node application
+          |
+          | POST /v1/messages
+          v
+maild API -> PostgreSQL + Redis queue -> worker -> your SMTP relay -> recipient
+```
 
-## Current State (pre-1.0)
+The API returns after accepting and queueing a message. Sending happens asynchronously in the worker. Use the logs and timeline endpoints to inspect the outcome.
 
-- Outbound control-plane core is implemented and tested.
-- API, queue/worker, retries/backoff, safety checks, and signed webhooks are in place.
-- User auth, RBAC, per-user API keys, and a server-rendered UI exist.
-- Operator console: `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
-- Pre-1.0: no tags or releases until the v1.0 gate (see [RELEASING.md](RELEASING.md)).
+## Current Status
 
-## Production Profile
+maild is pre-1.0. The core queue, worker, SMTP accounts, retries/backoff, failover, suppression rules, signed webhook handling, and operator UI are implemented. The v1.0 release gate has not passed; see the [QA matrix](docs/qa/v1.0-matrix.md). The API contract can change before v1.0, and there are no releases or tags before the v1.0 gate. See [RELEASING.md](RELEASING.md).
 
-- Use [`.env.production.example`](.env.production.example) as the baseline for production deployments.
-- `APP_ENV=production` now enforces strict startup validation and fails fast when required runtime values are missing or still using development defaults.
-- Ownership and rotation expectations are documented in [`deploy/production-config.md`](deploy/production-config.md).
+## Run Locally
 
-## Public Roadmap
+Requirements:
 
-Short- to mid-term plan lives in [ROADMAP.md](ROADMAP.md); release/version policy lives in [RELEASING.md](RELEASING.md).
+- Go 1.27.2 or later
+- Docker and Docker Compose
 
-## Stack
-
-- Go (`cmd/server`, `internal/*`)
-- PostgreSQL
-- Redis
-- Server-rendered web UI (no Node build chain)
-
-## Quick Start
-
-1. Bootstrap development:
+Set up PostgreSQL, Redis, and Mailpit for local development:
 
 ```sh
 make setup
 ```
 
-2. Run server:
+`make setup` creates `.env` when it is missing. Before starting maild, set a local encryption key in that file. Generate one with:
+
+```sh
+openssl rand -base64 32
+```
+
+Set the output as `ENCRYPTION_KEY_BASE64` in `.env`, then start the server:
 
 ```sh
 make run
 ```
 
-3. Health check:
+Confirm that it is running:
 
 ```sh
 curl -sS http://localhost:8080/healthz
 ```
 
-4. Local SMTP inbox (Mailpit):
+Mailpit receives local test messages at `http://localhost:8025`.
 
-```text
-http://localhost:8025
+## First Send
+
+The development `.env` uses the admin key `change-me-admin`. Do not use it outside local development.
+
+Register Mailpit as the active SMTP account for the default workspace:
+
+```sh
+curl -sS -X POST http://localhost:8080/v1/smtp-accounts \
+  -H 'X-API-Key: change-me-admin' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "workspace_id": 1,
+    "name": "mailpit",
+    "host": "localhost",
+    "port": 1025,
+    "from_email": "noreply@maild.local"
+  }'
 ```
 
-## First Send (end-to-end)
+Queue a message:
 
-Using the operator API key from `.env` (`ADMIN_API_KEY` / `OPERATOR_API_KEY`):
+```sh
+curl -sS -X POST http://localhost:8080/v1/messages \
+  -H 'X-API-Key: change-me-admin' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "workspace_id": 1,
+    "from_email": "noreply@maild.local",
+    "to_email": "you@example.com",
+    "subject": "Hi",
+    "body_text": "Hello from maild"
+  }'
+```
 
-1. Register a local SMTP relay (in development, Mailpit at `localhost:1025` accepts without auth):
+A successful request returns `201 Created` and a queued message object. The worker then sends it through Mailpit. Open `http://localhost:8025` to see it, or inspect the delivery records:
 
-   ```sh
-   curl -s -X POST http://localhost:8080/v1/smtp-accounts \
-     -H 'X-API-Key: change-me-admin' -H 'Content-Type: application/json' \
-     -d '{"workspace_id":1,"name":"mailpit","host":"localhost","port":1025,"from_email":"noreply@maild.local"}'
-   ```
+```sh
+curl -sS 'http://localhost:8080/v1/messages/logs?workspace_id=1' \
+  -H 'X-API-Key: change-me-admin'
+```
 
-2. Queue a message:
+## Integrate an Application
 
-   ```sh
-   curl -s -X POST http://localhost:8080/v1/messages \
-     -H 'X-API-Key: change-me-admin' -H 'Content-Type: application/json' \
-     -d '{"workspace_id":1,"from_email":"noreply@maild.local","to_email":"you@example.com","subject":"Hi","body_text":"Hello from maild"}'
-   ```
+Every application uses the same JSON request to `POST /v1/messages` and sends the configured API-key header (by default, `X-API-Key`). The required fields are `from_email`, `to_email`, and `subject`; `body_text` may be empty. Personal keys use their own workspace when `workspace_id` is omitted and cannot access another workspace. Trusted instance keys retain the default workspace `1`.
 
-3. The worker sends it via the configured SMTP account. Confirm delivery in Mailpit at `http://localhost:8025`, or inspect the attempt/log:
+Create personal keys in the dashboard for application integrations. Keys follow current workspace membership and role, and revocation takes effect immediately. The UI uses your session and does not expose instance keys. See [authentication and workspace access](docs/authentication.md).
 
-   ```sh
-   curl -s "http://localhost:8080/v1/messages/logs?workspace_id=1" -H 'X-API-Key: change-me-admin'
-   curl -s "http://localhost:8080/v1/messages/timeline?message_id=1" -H 'X-API-Key: change-me-admin'
-   ```
+- [Go integration example](docs/integrations/go.md)
+- [Node.js integration example](docs/integrations/node.md)
 
-## Core API Surface
+Before sending real mail, register an SMTP account with `POST /v1/smtp-accounts`. The account credentials are encrypted at rest. `SMTP_*` environment variables are still required at startup and act as the fallback SMTP account if a workspace has no registered account; see [production configuration](deploy/production-config.md).
 
-Authenticated with an `X-API-Key` header (`ADMIN_API_KEY` / `OPERATOR_API_KEY` from `.env`):
+### Common API Outcomes
 
-Message & delivery:
-- `POST /v1/messages`
-- `POST /v1/messages/retry`
-- `GET /v1/messages/logs`
-- `GET /v1/messages/timeline`
+| Status | Meaning |
+| --- | --- |
+| `201 Created` | The message was accepted and queued. It has not necessarily been delivered yet. |
+| `400 Bad Request` | The request is invalid, the recipient domain is blocked, or the recipient email is invalid. |
+| `401 Unauthorized` / `403 Forbidden` | The API key is missing, invalid, or lacks the required role. |
+| `429 Too Many Requests` | A workspace or recipient-domain rate limit was reached. |
+| `500 Internal Server Error` | maild could not queue or process the request. Check logs and the message timeline. |
 
-SMTP accounts:
-- `POST /v1/smtp-accounts`
-- `POST /v1/smtp-accounts/activate`
-- `POST /v1/smtp-accounts/validate`
-- `GET /v1/smtp-accounts/list`
+## Operate It
 
-Compliance & safety:
-- `POST /v1/suppressions`
-- `POST /v1/unsubscribes`
-- `GET/POST /v1/workspaces/policy`
+API-key-authenticated delivery and operational routes include:
+
+- `POST /v1/messages`, `POST /v1/messages/retry`
+- `GET /v1/messages/logs`, `GET /v1/messages/timeline`
+- `POST /v1/smtp-accounts`, `POST /v1/smtp-accounts/activate`, `POST /v1/smtp-accounts/validate`, `GET /v1/smtp-accounts/list`
+- `POST /v1/suppressions`, `POST /v1/unsubscribes`, `GET/POST /v1/workspaces/policy`
 - `POST /v1/domains/readiness`
+- `GET /v1/analytics/summary`, `GET /v1/analytics/export.csv`, `GET /v1/billing/metering` (usage metering only; it does not process payments)
+- `GET /v1/ops/onboarding-checklist`, `GET /v1/incidents/bundle`
 
-Webhooks:
-- `POST /v1/webhooks/events` (only when `WEBHOOKS_ENABLED=true`)
-- `GET /v1/webhooks/logs`
-- `POST /v1/webhooks/replay`
+When `WEBHOOKS_ENABLED=true`, maild also accepts signed provider events at `POST /v1/webhooks/events`; inspect and replay failed processing through `/v1/webhooks/logs` and `/v1/webhooks/replay`.
 
-Operational:
-- `GET /v1/ops/onboarding-checklist`
-- `GET /v1/incidents/bundle`
-- `GET /v1/analytics/summary`
-- `GET /v1/analytics/export.csv`
-- `GET /v1/billing/metering`
+The session-authenticated operator UI is available at `/ui`, `/ui/logs`, `/ui/onboarding`, `/ui/incidents`, and `/ui/policy`.
 
-User/auth routes (session-based):
-- `GET /` (landing page / JSON build info)
-- `GET/POST {APP_LOGIN_PATH}` (login page + sign-in; `APP_LOGIN_PATH` defaults to `/login`)
-- `GET /logout`, `GET /me`
-- `GET /signup`, `POST /api/v1/auth/signup` (only when `APP_ALLOW_SIGNUP=true`)
-- `GET /api/v1/onboarding/checklist`
-- `GET/POST/DELETE /api/v1/user/keys*`
-- `GET /dashboard` (requires login)
+## Production
 
-Operator routes (require auth):
-- `GET /ui`
-- `GET /ui/logs`
-- `GET /ui/onboarding`
-- `GET /ui/incidents`
-- `GET /ui/policy`
+Set `APP_ENV=production` and begin with [`.env.production.example`](.env.production.example). Production startup rejects missing values and development defaults. Read [production configuration ownership and rotation](deploy/production-config.md) before deployment.
 
-Health:
-- `GET /healthz`, `GET /readyz`
+## Development
 
-## Security And Safety Defaults
-
-- API key auth for `/v1/*`
-- role separation (`admin` vs `operator`)
-- encrypted SMTP credentials at rest (AES-GCM)
-- workspace/domain rate limits
-- blocked-recipient domain policy
-- suppression and unsubscribe enforcement
-- signed webhook verification (when enabled)
-
-## Verification
-
-Before merging:
+Run the project gate before contributing:
 
 ```sh
 make verify
 ```
 
-For a security-inclusive local pass:
-
-```sh
-make verify-full
-```
-
-Store integration tests against a real Postgres (skipped automatically when `MAILD_TEST_DSN` is unset; requires the dev Postgres from `make setup` plus a `maild_test` database):
+Run Postgres store integration tests after creating the local `maild_test` database:
 
 ```sh
 make test-store
 ```
 
-## Governance
-
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [AGENTS.md](AGENTS.md)
-- [SECURITY.md](SECURITY.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md), [ROADMAP.md](ROADMAP.md), and [SECURITY.md](SECURITY.md) for contribution, project direction, and vulnerability-reporting guidance.
 
 ## License
 
